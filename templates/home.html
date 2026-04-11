@@ -51,12 +51,10 @@
 
                     <!-- Progress -->
                     <div class="flex items-center gap-3">
-                        {{if gt $list.Stats.TotalItems 0}}
                         <div class="w-16 h-2 bg-stone-100 dark:bg-stone-700 rounded-full overflow-hidden hidden sm:block">
-                            <div class="h-full bg-pink-400 rounded-full transition-[width]" style="width: {{$list.Stats.Percentage}}%"></div>
+                            <div class="h-full bg-pink-400 rounded-full transition-[width]" data-progress-bar style="width: {{$list.Stats.Percentage}}%"></div>
                         </div>
-                        <span class="text-sm text-stone-400 dark:text-stone-500 w-10 text-right hidden sm:block">{{$list.Stats.Percentage}}%</span>
-                        {{end}}
+                        <span class="text-sm text-stone-400 dark:text-stone-500 w-10 text-right hidden sm:block" data-progress-pct>{{$list.Stats.Percentage}}%</span>
 
                         <!-- Actions button with dropdown -->
                         <div class="relative">
@@ -680,6 +678,7 @@ function homePage() {
         _wsInitialized: false,
         _reconnectAttempts: 0,
         _pingInterval: null,
+        _refreshStatsTimer: null,
         // Import state
         showImportPreview: false,
         importPreview: {},
@@ -745,7 +744,11 @@ function homePage() {
 
             document.addEventListener('visibilitychange', () => {
                 if (document.visibilityState === 'visible') {
-                    this.refreshListStats();
+                    this.debouncedRefreshListStats();
+                    this._reconnectAttempts = 0;
+                    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+                        this.connectWS();
+                    }
                 }
             });
         },
@@ -803,46 +806,55 @@ function homePage() {
             setTimeout(() => this.connectWS(), delay);
         },
 
+        _parsePositiveInt(val) {
+            const n = parseInt(val, 10);
+            return (Number.isFinite(n) && n > 0) ? n : null;
+        },
+
         handleWSMessage(data) {
             try {
                 const message = JSON.parse(data);
                 switch (message.type) {
-                    case 'list_created':
-                        if (message.data?.id && !document.getElementById(`home-list-${message.data.id}`)) {
+                    case 'list_created': {
+                        const id = this._parsePositiveInt(message.data?.id);
+                        if (!id) break;
+                        if (!document.getElementById(`home-list-${id}`)) {
                             const container = document.getElementById('lists-container');
                             if (container) {
                                 container.insertAdjacentHTML('beforeend', this.buildListCardHtml(
-                                    message.data.id,
+                                    id,
                                     message.data.name,
                                     message.data.icon || '🛒'
                                 ));
                                 Alpine.initTree(container.lastElementChild);
                             } else {
-                                // No lists container (onboarding state) - reload to show proper UI
                                 window.location.reload();
                             }
                         }
                         break;
-                    case 'list_updated':
-                        if (message.data?.id) {
-                            const el = document.getElementById(`home-list-${message.data.id}`);
-                            if (el) {
-                                const nameEl = el.querySelector('.font-medium');
-                                if (nameEl) nameEl.textContent = message.data.name;
-                                const iconEl = el.querySelector('.text-2xl span');
-                                if (iconEl) iconEl.textContent = message.data.icon || '🛒';
-                            }
+                    }
+                    case 'list_updated': {
+                        const id = this._parsePositiveInt(message.data?.id);
+                        if (!id) break;
+                        const el = document.getElementById(`home-list-${id}`);
+                        if (el) {
+                            const nameEl = el.querySelector('.font-medium');
+                            if (nameEl) nameEl.textContent = message.data.name;
+                            const iconEl = el.querySelector('.text-2xl span');
+                            if (iconEl) iconEl.textContent = message.data.icon || '🛒';
                         }
                         break;
-                    case 'list_deleted':
-                        if (message.data?.id) {
-                            const el = document.getElementById(`home-list-${message.data.id}`);
-                            if (el) {
-                                Alpine.destroyTree(el);
-                                el.remove();
-                            }
+                    }
+                    case 'list_deleted': {
+                        const id = this._parsePositiveInt(message.data?.id);
+                        if (!id) break;
+                        const el = document.getElementById(`home-list-${id}`);
+                        if (el) {
+                            Alpine.destroyTree(el);
+                            el.remove();
                         }
                         break;
+                    }
                     case 'item_created':
                     case 'item_deleted':
                     case 'item_toggled':
@@ -852,12 +864,22 @@ function homePage() {
                     case 'completed_items_deleted':
                     case 'section_items_checked':
                     case 'section_items_unchecked':
-                        this.refreshListStats();
+                    case 'template_applied':
+                        this.debouncedRefreshListStats();
+                        break;
+                    case 'lists_reordered':
+                    case 'database_cleared':
+                        window.location.reload();
                         break;
                 }
             } catch (e) {
                 console.error('[Home] Failed to parse WS message:', e);
             }
+        },
+
+        debouncedRefreshListStats() {
+            if (this._refreshStatsTimer) clearTimeout(this._refreshStatsTimer);
+            this._refreshStatsTimer = setTimeout(() => this.refreshListStats(), 300);
         },
 
         async refreshListStats() {
@@ -883,11 +905,11 @@ function homePage() {
                     }
 
                     // Update progress bar width
-                    const bar = el.querySelector('.bg-pink-400');
+                    const bar = el.querySelector('[data-progress-bar]');
                     if (bar) bar.style.width = `${pct}%`;
 
                     // Update percentage text
-                    const pctSpan = el.querySelector('.w-10.text-right');
+                    const pctSpan = el.querySelector('[data-progress-pct]');
                     if (pctSpan) pctSpan.textContent = `${pct}%`;
                 });
             } catch (e) {
@@ -1093,12 +1115,15 @@ function homePage() {
                         }
                     } else {
                         // New list - parse response to get ID, then build card
+                        // WS list_created may have already inserted the card
                         const html = await response.text();
                         const match = html.match(/id="list-(\d+)"/);
                         const newId = match ? match[1] : Date.now();
-                        const container = document.getElementById('lists-container');
-                        if (container) {
-                            container.insertAdjacentHTML('beforeend', this.buildListCardHtml(newId, name, icon));
+                        if (!document.getElementById(`home-list-${newId}`)) {
+                            const container = document.getElementById('lists-container');
+                            if (container) {
+                                container.insertAdjacentHTML('beforeend', this.buildListCardHtml(newId, name, icon));
+                            }
                         }
                     }
                     this.showNewListModal = false;
@@ -1162,6 +1187,10 @@ function homePage() {
                     <p class="text-sm text-stone-400 dark:text-stone-500" data-stats-count>0/0 ${completedText}</p>
                 </a>
                 <div class="flex items-center gap-3">
+                    <div class="w-16 h-2 bg-stone-100 dark:bg-stone-700 rounded-full overflow-hidden hidden sm:block">
+                        <div class="h-full bg-pink-400 rounded-full transition-[width]" data-progress-bar style="width: 0%"></div>
+                    </div>
+                    <span class="text-sm text-stone-400 dark:text-stone-500 w-10 text-right hidden sm:block" data-progress-pct>0%</span>
                     <div class="relative">
                         <button @click.stop="showActions = !showActions" class="p-2 text-stone-400 dark:text-stone-500 hover:text-stone-600 dark:hover:text-stone-300 rounded-lg transition-colors">
                             <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
