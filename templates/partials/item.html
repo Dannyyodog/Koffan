@@ -3,9 +3,56 @@
     id="item-{{.Item.ID}}"
     data-item-id="{{.Item.ID}}"
     data-section-id="{{.Item.SectionID}}"
+    data-item-name="{{.Item.Name}}"
     class="px-4 py-3 flex items-center gap-0.5 hover:bg-stone-50 dark:hover:bg-stone-700 transition-colors group select-none {{if .Item.Uncertain}}bg-amber-50/50 dark:bg-amber-900/30{{end}}"
     x-show="isItemVisible({{.Item.ID}})"
 >
+    <!-- Image Thumbnail / Upload Slot -->
+    <div
+        class="image-slot relative w-12 h-12 flex-shrink-0 rounded overflow-hidden cursor-pointer mr-2"
+        data-item-name="{{.Item.Name}}"
+        @click.stop="$data.openImageAction({{.Item.ID}}, '{{.Item.Name | js}}', '{{.Item.ImagePath | js}}')"
+        @contextmenu.prevent="$data.confirmRemoveImage({{.Item.ID}}, '{{.Item.Name | js}}', '{{.Item.ImagePath | js}}')"
+        @touchstart.passive="$data.startLongPress({{.Item.ID}}, '{{.Item.Name | js}}', '{{.Item.ImagePath | js}}')"
+        @touchend="$data.cancelLongPress()"
+        @touchmove="$data.cancelLongPress()"
+        @touchcancel="$data.cancelLongPress()"
+        :aria-label="'{{.Item.ImagePath | js}}' ? '{{.Item.Name | js}}' : t('actions.add_image')"
+    >
+        {{if .Item.ImagePath}}
+        <img src="/uploads/{{.Item.ImagePath}}"
+             alt="{{.Item.Name}}"
+             class="w-full h-full object-cover"
+             loading="lazy">
+        {{else}}
+        <div class="w-full h-full bg-stone-100 dark:bg-stone-700 flex items-center justify-center text-stone-400 dark:text-stone-500"
+             :aria-label="t('image.placeholder_alt')">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z"></path>
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z"></path>
+            </svg>
+        </div>
+        {{end}}
+        <!-- Loading overlay (visible while upload in flight for this item) -->
+        <div class="absolute inset-0 bg-black/55 flex items-center justify-center"
+             x-show="$data.uploadingImageFor === {{.Item.ID}}"
+             x-cloak
+             :aria-label="t('image.uploading')"
+             role="status">
+            <svg class="w-5 h-5 text-white animate-spin" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"></path>
+            </svg>
+        </div>
+        <!-- Hidden file input, triggered programmatically by openImageAction -->
+        <input type="file"
+               accept="image/*"
+               class="hidden"
+               id="image-input-{{.Item.ID}}"
+               @change="$data.uploadImage({{.Item.ID}}, $event.target.files[0])"
+               @click.stop>
+    </div>
+
     <!-- Drag Handle -->
     <div class="drag-handle flex-shrink-0 w-5 h-10 flex items-center justify-center -ml-2 touch-none cursor-grab active:cursor-grabbing text-stone-300 dark:text-stone-600 hover:text-stone-400 dark:hover:text-stone-500 transition-colors">
         <svg class="w-4 h-5" fill="currentColor" viewBox="0 0 24 24">

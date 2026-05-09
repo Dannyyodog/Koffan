@@ -32,6 +32,7 @@ type Item struct {
 	SortOrder   int       `json:"sort_order"`
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   int64     `json:"updated_at"`
+	ImagePath   string    `json:"image_path"`
 }
 
 // Session represents a user session
@@ -584,11 +585,12 @@ func MoveSectionDown(id int64) error {
 func FindItemByNameInSection(sectionID int64, name string) (*Item, error) {
 	var i Item
 	err := DB.QueryRow(`
-		SELECT id, section_id, name, description, completed, uncertain, COALESCE(quantity, 0), sort_order, created_at, COALESCE(updated_at, 0)
-		FROM items
-		WHERE section_id = ? AND LOWER(name) = LOWER(?)
+		SELECT i.id, i.section_id, i.name, i.description, i.completed, i.uncertain, COALESCE(i.quantity, 0), i.sort_order, i.created_at, COALESCE(i.updated_at, 0), COALESCE(ih.image_path, '') AS image_path
+		FROM items i
+		LEFT JOIN item_history ih ON i.name = ih.name COLLATE NOCASE
+		WHERE i.section_id = ? AND LOWER(i.name) = LOWER(?)
 		LIMIT 1
-	`, sectionID, name).Scan(&i.ID, &i.SectionID, &i.Name, &i.Description, &i.Completed, &i.Uncertain, &i.Quantity, &i.SortOrder, &i.CreatedAt, &i.UpdatedAt)
+	`, sectionID, name).Scan(&i.ID, &i.SectionID, &i.Name, &i.Description, &i.Completed, &i.Uncertain, &i.Quantity, &i.SortOrder, &i.CreatedAt, &i.UpdatedAt, &i.ImagePath)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, nil
@@ -626,22 +628,25 @@ func getItemsBySectionWithMode(sectionID int64, sortMode string) ([]Item, error)
 	switch sortMode {
 	case "alphabetical":
 		query = `
-		SELECT id, section_id, name, description, completed, uncertain, COALESCE(quantity, 0), sort_order, created_at, COALESCE(updated_at, 0)
-		FROM items
-		WHERE section_id = ?
-		ORDER BY completed ASC, name COLLATE NOCASE ASC`
+		SELECT i.id, i.section_id, i.name, i.description, i.completed, i.uncertain, COALESCE(i.quantity, 0), i.sort_order, i.created_at, COALESCE(i.updated_at, 0), COALESCE(ih.image_path, '') AS image_path
+		FROM items i
+		LEFT JOIN item_history ih ON i.name = ih.name COLLATE NOCASE
+		WHERE i.section_id = ?
+		ORDER BY i.completed ASC, i.name COLLATE NOCASE ASC`
 	case "alphabetical_desc":
 		query = `
-		SELECT id, section_id, name, description, completed, uncertain, COALESCE(quantity, 0), sort_order, created_at, COALESCE(updated_at, 0)
-		FROM items
-		WHERE section_id = ?
-		ORDER BY completed ASC, name COLLATE NOCASE DESC`
+		SELECT i.id, i.section_id, i.name, i.description, i.completed, i.uncertain, COALESCE(i.quantity, 0), i.sort_order, i.created_at, COALESCE(i.updated_at, 0), COALESCE(ih.image_path, '') AS image_path
+		FROM items i
+		LEFT JOIN item_history ih ON i.name = ih.name COLLATE NOCASE
+		WHERE i.section_id = ?
+		ORDER BY i.completed ASC, i.name COLLATE NOCASE DESC`
 	default:
 		query = `
-		SELECT id, section_id, name, description, completed, uncertain, COALESCE(quantity, 0), sort_order, created_at, COALESCE(updated_at, 0)
-		FROM items
-		WHERE section_id = ?
-		ORDER BY completed ASC, sort_order ASC`
+		SELECT i.id, i.section_id, i.name, i.description, i.completed, i.uncertain, COALESCE(i.quantity, 0), i.sort_order, i.created_at, COALESCE(i.updated_at, 0), COALESCE(ih.image_path, '') AS image_path
+		FROM items i
+		LEFT JOIN item_history ih ON i.name = ih.name COLLATE NOCASE
+		WHERE i.section_id = ?
+		ORDER BY i.completed ASC, i.sort_order ASC`
 	}
 
 	rows, err := DB.Query(query, sectionID)
@@ -653,7 +658,7 @@ func getItemsBySectionWithMode(sectionID int64, sortMode string) ([]Item, error)
 	var items []Item
 	for rows.Next() {
 		var i Item
-		err := rows.Scan(&i.ID, &i.SectionID, &i.Name, &i.Description, &i.Completed, &i.Uncertain, &i.Quantity, &i.SortOrder, &i.CreatedAt, &i.UpdatedAt)
+		err := rows.Scan(&i.ID, &i.SectionID, &i.Name, &i.Description, &i.Completed, &i.Uncertain, &i.Quantity, &i.SortOrder, &i.CreatedAt, &i.UpdatedAt, &i.ImagePath)
 		if err != nil {
 			return nil, err
 		}
@@ -689,9 +694,11 @@ func UncheckAllItems(sectionID int64) (int64, error) {
 func GetItemByID(id int64) (*Item, error) {
 	var i Item
 	err := DB.QueryRow(`
-		SELECT id, section_id, name, description, completed, uncertain, COALESCE(quantity, 0), sort_order, created_at, COALESCE(updated_at, 0)
-		FROM items WHERE id = ?
-	`, id).Scan(&i.ID, &i.SectionID, &i.Name, &i.Description, &i.Completed, &i.Uncertain, &i.Quantity, &i.SortOrder, &i.CreatedAt, &i.UpdatedAt)
+		SELECT i.id, i.section_id, i.name, i.description, i.completed, i.uncertain, COALESCE(i.quantity, 0), i.sort_order, i.created_at, COALESCE(i.updated_at, 0), COALESCE(ih.image_path, '') AS image_path
+		FROM items i
+		LEFT JOIN item_history ih ON i.name = ih.name COLLATE NOCASE
+		WHERE i.id = ?
+	`, id).Scan(&i.ID, &i.SectionID, &i.Name, &i.Description, &i.Completed, &i.Uncertain, &i.Quantity, &i.SortOrder, &i.CreatedAt, &i.UpdatedAt, &i.ImagePath)
 	if err != nil {
 		return nil, err
 	}
@@ -1176,6 +1183,52 @@ func SaveItemHistory(name string, sectionID int64) error {
 			last_used_at = strftime('%s', 'now')
 	`, name, sectionID)
 	return err
+}
+
+// ==================== ITEM IMAGES ====================
+
+// UpsertItemImage attaches an image filename to the given item name in item_history.
+// Images are keyed by name (case-insensitive via the existing UNIQUE(name COLLATE NOCASE)
+// constraint), so all items sharing a name share an image. If no history row exists
+// for the name, a new one is inserted with last_section_id NULL and usage_count 0.
+func UpsertItemImage(name, imagePath string) error {
+	_, err := DB.Exec(`
+		INSERT INTO item_history (name, image_path, last_section_id, usage_count, last_used_at)
+		VALUES (?, ?, NULL, 0, strftime('%s', 'now'))
+		ON CONFLICT(name COLLATE NOCASE) DO UPDATE SET
+			image_path = excluded.image_path,
+			last_used_at = strftime('%s', 'now')
+	`, name, imagePath)
+	return err
+}
+
+// DeleteItemImage clears the image_path for the given item name and returns the
+// previous filename so the caller can remove the file from disk. Returns an empty
+// string if no image was attached.
+func DeleteItemImage(name string) (string, error) {
+	var oldPath sql.NullString
+	err := DB.QueryRow(`
+		SELECT image_path FROM item_history WHERE name = ? COLLATE NOCASE LIMIT 1
+	`, name).Scan(&oldPath)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return "", nil
+		}
+		return "", err
+	}
+
+	_, err = DB.Exec(`
+		UPDATE item_history SET image_path = NULL, last_used_at = strftime('%s', 'now')
+		WHERE name = ? COLLATE NOCASE
+	`, name)
+	if err != nil {
+		return "", err
+	}
+
+	if oldPath.Valid {
+		return oldPath.String, nil
+	}
+	return "", nil
 }
 
 // SaveItemHistoryWithCount saves item history with a specific usage count (used for import)
@@ -1791,9 +1844,11 @@ func CreateItemTx(tx *sql.Tx, sectionID int64, name, description string, quantit
 
 	var i Item
 	err = tx.QueryRow(`
-		SELECT id, section_id, name, description, completed, uncertain, COALESCE(quantity, 0), sort_order, created_at, COALESCE(updated_at, 0)
-		FROM items WHERE id = ?
-	`, id).Scan(&i.ID, &i.SectionID, &i.Name, &i.Description, &i.Completed, &i.Uncertain, &i.Quantity, &i.SortOrder, &i.CreatedAt, &i.UpdatedAt)
+		SELECT i.id, i.section_id, i.name, i.description, i.completed, i.uncertain, COALESCE(i.quantity, 0), i.sort_order, i.created_at, COALESCE(i.updated_at, 0), COALESCE(ih.image_path, '') AS image_path
+		FROM items i
+		LEFT JOIN item_history ih ON i.name = ih.name COLLATE NOCASE
+		WHERE i.id = ?
+	`, id).Scan(&i.ID, &i.SectionID, &i.Name, &i.Description, &i.Completed, &i.Uncertain, &i.Quantity, &i.SortOrder, &i.CreatedAt, &i.UpdatedAt, &i.ImagePath)
 	if err != nil {
 		return nil, err
 	}

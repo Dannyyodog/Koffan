@@ -119,7 +119,13 @@
     "uncertain": "Uncertain",
     "certain": "Certain",
     "remove_mark": "Remove mark",
-    "mark_uncertain": "Mark as uncertain"
+    "mark_uncertain": "Mark as uncertain",
+    "add_image": "Add image",
+    "remove_image": "Remove image"
+  },
+  "image": {
+    "uploading": "Uploading...",
+    "placeholder_alt": "No image yet"
   },
   "settings": {
     "title": "Settings",
@@ -158,7 +164,8 @@
     "delete_sections": "Delete {{count}} selected sections?",
     "delete_section": "Delete section '{{name}}'?",
     "delete_completed_items": "Delete all bought items?",
-    "delete_template": "Delete template \"{{name}}\"?"
+    "delete_template": "Delete template \"{{name}}\"?",
+    "remove_image": "Remove image for \"{{name}}\"?"
   },
   "stats": {
     "progress": "Progress"
@@ -199,6 +206,12 @@
     "session_failed": "Session creation failed",
     "database_unavailable": "Database temporarily unavailable, please retry",
     "database_error": "Database error",
+    "invalid_item_id": "Invalid item ID",
+    "image_required": "Please choose an image to upload",
+    "image_too_large": "Image is too large (max 10 MB)",
+    "image_invalid_format": "Unsupported image format (use JPG, PNG, WebP, GIF, or HEIC)",
+    "image_decode_failed": "Could not process this image, please try a different one",
+    "image_save_failed": "Could not save image, please try again",
     "recipe_not_found": "Recipe not found",
     "recipe_name_required": "Recipe name is required",
     "recipe_name_too_long": "Recipe name is too long",

@@ -256,6 +256,13 @@ function shoppingList() {
         // Current item for mobile actions
         mobileActionItem: null,
 
+        // Per-item image upload state
+        uploadingImageFor: null,        // item ID currently uploading, or null
+        lightboxItemId: null,           // item ID for the open lightbox, or null
+        lightboxImageUrl: '',
+        lightboxItemName: '',
+        longPressTimer: null,
+
         // Edit item
         editingItem: null,
         editItemName: '',
@@ -937,6 +944,14 @@ function shoppingList() {
                             }
                         }
                         this.refreshStats();
+                        break;
+                    case 'item_image_updated':
+                        // Image is keyed by item name (case-insensitive on the backend),
+                        // so all rows sharing that name need refreshing — not just the
+                        // one we POST'd to. Payload: { name, image_url }. We refresh the
+                        // local tab too: it's idempotent, and the cost is one extra
+                        // /items/:id/html fetch per matching row.
+                        this.refreshItemsByName(message.data?.name);
                         break;
                     case 'template_applied':
                         // Template adds items to multiple sections - full refresh needed
@@ -1869,6 +1884,127 @@ function shoppingList() {
                 this.updateCompletedVisibility(section);
             }
             window.checkEmptyStates();
+        },
+
+        // ===== Per-item image upload =====
+
+        // Tap on the thumbnail slot. If the item has an image, open the lightbox;
+        // otherwise programmatically click the hidden file input to open the OS picker.
+        openImageAction(itemId, itemName, imagePath) {
+            if (imagePath) {
+                this.lightboxItemId = itemId;
+                this.lightboxItemName = itemName;
+                this.lightboxImageUrl = '/uploads/' + imagePath;
+            } else {
+                const input = document.getElementById('image-input-' + itemId);
+                if (input) input.click();
+            }
+        },
+
+        closeLightbox() {
+            this.lightboxItemId = null;
+            this.lightboxImageUrl = '';
+            this.lightboxItemName = '';
+        },
+
+        // POST /items/:id/image, replace item row with the returned partial.
+        async uploadImage(itemId, file) {
+            if (!file) return;
+            this.uploadingImageFor = itemId;
+            const formData = new FormData();
+            formData.append('image', file);
+            try {
+                const response = await fetch('/items/' + itemId + '/image', {
+                    method: 'POST',
+                    body: formData,
+                });
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    alert(errorText || t('error.image_save_failed'));
+                    return;
+                }
+                const html = await response.text();
+                const existing = document.getElementById('item-' + itemId);
+                if (existing) {
+                    existing.insertAdjacentHTML('afterend', html.trim());
+                    try { Alpine.destroyTree(existing); } catch (_) {}
+                    existing.remove();
+                }
+            } catch (err) {
+                console.error('[image upload]', err);
+                alert(t('error.image_save_failed'));
+            } finally {
+                this.uploadingImageFor = null;
+                // Clear input so re-uploading the same file fires @change again
+                const input = document.getElementById('image-input-' + itemId);
+                if (input) input.value = '';
+            }
+        },
+
+        // DELETE /items/:id/image, replace item row with the returned partial.
+        async deleteImage(itemId) {
+            try {
+                const response = await fetch('/items/' + itemId + '/image', { method: 'DELETE' });
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    alert(errorText || t('error.image_save_failed'));
+                    return;
+                }
+                const html = await response.text();
+                const existing = document.getElementById('item-' + itemId);
+                if (existing) {
+                    existing.insertAdjacentHTML('afterend', html.trim());
+                    try { Alpine.destroyTree(existing); } catch (_) {}
+                    existing.remove();
+                }
+                if (this.lightboxItemId === itemId) this.closeLightbox();
+            } catch (err) {
+                console.error('[image delete]', err);
+                alert(t('error.image_save_failed'));
+            }
+        },
+
+        // Confirm dialog wrapper used by long-press, right-click, and lightbox button.
+        // No-op when there is no image to remove (used by long-press from placeholder).
+        confirmRemoveImage(itemId, itemName, imagePath) {
+            if (!imagePath && imagePath !== undefined) return;
+            if (confirm(t('confirm.remove_image', { name: itemName }))) {
+                this.deleteImage(itemId);
+            }
+        },
+
+        // Touch long-press handler. Fires confirmRemoveImage after ~600ms.
+        // Skipped when there is no image (long-press on a placeholder is meaningless).
+        startLongPress(itemId, itemName, imagePath) {
+            if (!imagePath) return;
+            this.cancelLongPress();
+            this.longPressTimer = setTimeout(() => {
+                this.confirmRemoveImage(itemId, itemName, imagePath);
+            }, 600);
+        },
+
+        cancelLongPress() {
+            if (this.longPressTimer) {
+                clearTimeout(this.longPressTimer);
+                this.longPressTimer = null;
+            }
+        },
+
+        // Refresh every visible item row whose name matches `name` (case-insensitive).
+        // Used by the WebSocket item_image_updated dispatch so all rows sharing a
+        // name (the image is keyed by name) update their thumbnail in-place.
+        refreshItemsByName(name) {
+            if (!name) return;
+            const target = name.toLowerCase();
+            const seen = new Set();
+            document.querySelectorAll('[data-item-name]').forEach(el => {
+                if (!el.id || !el.id.startsWith('item-')) return;
+                if ((el.dataset.itemName || '').toLowerCase() !== target) return;
+                const itemId = el.id.replace('item-', '');
+                if (seen.has(itemId)) return;
+                seen.add(itemId);
+                this.replaceRemoteItem(itemId);
+            });
         },
 
         // Replace an updated item in-place with fresh HTML from server

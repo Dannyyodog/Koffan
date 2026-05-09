@@ -2,7 +2,10 @@ package handlers
 
 import (
 	"database/sql"
+	"errors"
 	"log"
+	"os"
+	"path/filepath"
 	"shopping-list/db"
 	"strconv"
 	"strings"
@@ -470,6 +473,129 @@ func UncheckAllItems(c *fiber.Ctx) error {
 func GetStats(c *fiber.Ctx) error {
 	stats := db.GetStats()
 	return c.JSON(stats)
+}
+
+// UploadItemImage attaches an uploaded image to an item. The image is keyed by
+// item name (case-insensitive via item_history's UNIQUE(name COLLATE NOCASE))
+// so all items sharing a name share the picture.
+func UploadItemImage(c *fiber.Ctx) error {
+	id, err := strconv.ParseInt(c.Params("id"), 10, 64)
+	if err != nil {
+		return sendError(c, 400, "error.invalid_item_id")
+	}
+
+	item, err := db.GetItemByID(id)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return sendError(c, 404, "error.item_not_found")
+		}
+		log.Printf("[UPLOAD] fetch item %d failed: %v", id, err)
+		return sendError(c, 500, "error.fetch_failed")
+	}
+
+	file, err := c.FormFile("image")
+	if err != nil || file == nil {
+		return sendError(c, 400, "error.image_required")
+	}
+
+	filename, err := saveUploadedImage(file)
+	if err != nil {
+		switch {
+		case errors.Is(err, errImageTooLarge):
+			return sendError(c, 413, "error.image_too_large")
+		case errors.Is(err, errImageInvalidFormat):
+			return sendError(c, 415, "error.image_invalid_format")
+		case errors.Is(err, errImageDecodeFailed):
+			return sendError(c, 422, "error.image_decode_failed")
+		default:
+			log.Printf("[UPLOAD] save failed: %v", err)
+			return sendError(c, 500, "error.image_save_failed")
+		}
+	}
+
+	if err := db.UpsertItemImage(item.Name, filename); err != nil {
+		log.Printf("[UPLOAD] upsert image for %q failed: %v", item.Name, err)
+		return sendError(c, 500, "error.image_save_failed")
+	}
+
+	// Re-fetch so the JOIN-populated ImagePath reflects the new image.
+	updated, err := db.GetItemByID(id)
+	if err != nil {
+		log.Printf("[UPLOAD] refetch item %d failed: %v", id, err)
+		return sendError(c, 500, "error.fetch_failed")
+	}
+
+	BroadcastUpdate("item_image_updated", map[string]interface{}{
+		"name":      updated.Name,
+		"image_url": "/uploads/" + filename,
+	})
+
+	c.Set("HX-Trigger-After-Settle", `{"statsRefresh":"true"}`)
+	if updated.Completed {
+		return c.Render("partials/item_completed", fiber.Map{
+			"Item":     updated,
+			"Sections": getSectionsForDropdown(),
+		}, "")
+	}
+	return c.Render("partials/item", fiber.Map{
+		"Item":     updated,
+		"Sections": getSectionsForDropdown(),
+	}, "")
+}
+
+// DeleteItemImage clears the image associated with an item's name and removes
+// the underlying file from disk. The DB is the source of truth — file removal
+// errors are logged but do not fail the request.
+func DeleteItemImage(c *fiber.Ctx) error {
+	id, err := strconv.ParseInt(c.Params("id"), 10, 64)
+	if err != nil {
+		return sendError(c, 400, "error.invalid_item_id")
+	}
+
+	item, err := db.GetItemByID(id)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return sendError(c, 404, "error.item_not_found")
+		}
+		log.Printf("[UPLOAD] fetch item %d failed: %v", id, err)
+		return sendError(c, 500, "error.fetch_failed")
+	}
+
+	oldPath, err := db.DeleteItemImage(item.Name)
+	if err != nil {
+		log.Printf("[UPLOAD] clear image for %q failed: %v", item.Name, err)
+		return sendError(c, 500, "error.image_save_failed")
+	}
+
+	if oldPath != "" && UploadsRoot() != "" {
+		fullPath := filepath.Join(UploadsRoot(), oldPath)
+		if rmErr := os.Remove(fullPath); rmErr != nil && !os.IsNotExist(rmErr) {
+			log.Printf("[UPLOAD] remove file %q failed: %v", fullPath, rmErr)
+		}
+	}
+
+	updated, err := db.GetItemByID(id)
+	if err != nil {
+		log.Printf("[UPLOAD] refetch item %d failed: %v", id, err)
+		return sendError(c, 500, "error.fetch_failed")
+	}
+
+	BroadcastUpdate("item_image_updated", map[string]interface{}{
+		"name":      updated.Name,
+		"image_url": "",
+	})
+
+	c.Set("HX-Trigger-After-Settle", `{"statsRefresh":"true"}`)
+	if updated.Completed {
+		return c.Render("partials/item_completed", fiber.Map{
+			"Item":     updated,
+			"Sections": getSectionsForDropdown(),
+		}, "")
+	}
+	return c.Render("partials/item", fiber.Map{
+		"Item":     updated,
+		"Sections": getSectionsForDropdown(),
+	}, "")
 }
 
 // GetItemVersion returns the current updated_at timestamp for an item (for offline sync conflict resolution)

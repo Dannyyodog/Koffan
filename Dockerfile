@@ -3,8 +3,8 @@ FROM golang:1.21-alpine AS builder
 
 WORKDIR /app
 
-# Install build dependencies for SQLite
-RUN apk add --no-cache gcc musl-dev
+# Install build dependencies for SQLite and libheif (HEIC support)
+RUN apk add --no-cache gcc musl-dev libheif-dev pkgconfig
 
 # Copy go mod files
 COPY go.mod go.sum ./
@@ -26,8 +26,8 @@ LABEL org.opencontainers.image.licenses=MIT
 
 WORKDIR /app
 
-# Install runtime dependencies
-RUN apk --no-cache add ca-certificates tzdata libc6-compat
+# Install runtime dependencies (libheif for HEIC decoding at runtime)
+RUN apk --no-cache add ca-certificates tzdata libc6-compat libheif
 
 # Copy binary from builder
 COPY --from=builder /app/shopping-list .
@@ -39,6 +39,7 @@ RUN mkdir -p /data
 ENV APP_ENV=production
 ENV PORT=8080
 ENV DB_PATH=/data/shopping.db
+ENV UPLOADS_PATH=/data/uploads
 
 # Expose port
 EXPOSE 8080

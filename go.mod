@@ -7,6 +7,7 @@ require (
 	github.com/gofiber/template/html/v2 v2.1.2
 	github.com/gofiber/websocket/v2 v2.2.1
 	github.com/mattn/go-sqlite3 v1.14.24
+	github.com/strukturag/libheif-go v0.0.0-20250130134905-55b3482bea15
 )
 
 require (
