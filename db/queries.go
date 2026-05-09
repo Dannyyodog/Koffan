@@ -1862,6 +1862,677 @@ func GetSectionNameForItem(itemName string) string {
 	return sectionName
 }
 
+// ==================== RECIPES ====================
+
+// Recipe represents a recipe with optional ingredients/steps loaded on demand.
+type Recipe struct {
+	ID             int64              `json:"id"`
+	Name           string             `json:"name"`
+	Description    string             `json:"description"`
+	CoverImagePath *string            `json:"cover_image_path"`
+	SortOrder      int                `json:"sort_order"`
+	CreatedAt      time.Time          `json:"created_at"`
+	UpdatedAt      int64              `json:"updated_at"`
+	Ingredients    []RecipeIngredient `json:"ingredients,omitempty"`
+	Steps          []RecipeStep       `json:"steps,omitempty"`
+}
+
+// RecipeIngredient represents one ingredient row inside a recipe.
+// Quantity is *int because "to taste" stores NULL.
+type RecipeIngredient struct {
+	ID        int64     `json:"id"`
+	RecipeID  int64     `json:"recipe_id"`
+	Name      string    `json:"name"`
+	Quantity  *int      `json:"quantity"`
+	Unit      string    `json:"unit"`
+	SortOrder int       `json:"sort_order"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// RecipeStep represents one numbered instruction step inside a recipe.
+type RecipeStep struct {
+	ID         int64     `json:"id"`
+	RecipeID   int64     `json:"recipe_id"`
+	StepNumber int       `json:"step_number"`
+	Content    string    `json:"content"`
+	CreatedAt  time.Time `json:"created_at"`
+}
+
+// scanRecipe is a tiny helper that knows how to read cover_image_path as nullable.
+func scanRecipe(scanner interface {
+	Scan(dest ...interface{}) error
+}) (Recipe, error) {
+	var r Recipe
+	var cover sql.NullString
+	if err := scanner.Scan(&r.ID, &r.Name, &r.Description, &cover, &r.SortOrder, &r.CreatedAt, &r.UpdatedAt); err != nil {
+		return r, err
+	}
+	if cover.Valid {
+		s := cover.String
+		r.CoverImagePath = &s
+	}
+	return r, nil
+}
+
+// GetRecipes returns all recipes (no ingredients/steps loaded).
+func GetRecipes() ([]Recipe, error) {
+	rows, err := DB.Query(`
+		SELECT id, name, description, cover_image_path, sort_order, created_at, COALESCE(updated_at, 0)
+		FROM recipes
+		ORDER BY sort_order ASC
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var recipes []Recipe
+	for rows.Next() {
+		r, err := scanRecipe(rows)
+		if err != nil {
+			return nil, err
+		}
+		recipes = append(recipes, r)
+	}
+	return recipes, rows.Err()
+}
+
+// GetRecipe returns one recipe with its ingredients and steps.
+func GetRecipe(id int64) (*Recipe, error) {
+	row := DB.QueryRow(`
+		SELECT id, name, description, cover_image_path, sort_order, created_at, COALESCE(updated_at, 0)
+		FROM recipes WHERE id = ?
+	`, id)
+	r, err := scanRecipe(row)
+	if err != nil {
+		return nil, err
+	}
+	r.Ingredients, err = GetRecipeIngredients(r.ID)
+	if err != nil {
+		return nil, err
+	}
+	r.Steps, err = GetRecipeSteps(r.ID)
+	if err != nil {
+		return nil, err
+	}
+	return &r, nil
+}
+
+// GetRecipeIngredients returns ingredients for a recipe ordered by sort_order.
+func GetRecipeIngredients(recipeID int64) ([]RecipeIngredient, error) {
+	rows, err := DB.Query(`
+		SELECT id, recipe_id, name, quantity, unit, sort_order, created_at
+		FROM recipe_ingredients
+		WHERE recipe_id = ?
+		ORDER BY sort_order ASC
+	`, recipeID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var ingredients []RecipeIngredient
+	for rows.Next() {
+		var ri RecipeIngredient
+		var qty sql.NullInt64
+		if err := rows.Scan(&ri.ID, &ri.RecipeID, &ri.Name, &qty, &ri.Unit, &ri.SortOrder, &ri.CreatedAt); err != nil {
+			return nil, err
+		}
+		if qty.Valid {
+			q := int(qty.Int64)
+			ri.Quantity = &q
+		}
+		ingredients = append(ingredients, ri)
+	}
+	return ingredients, rows.Err()
+}
+
+// GetRecipeSteps returns steps for a recipe ordered by step_number.
+func GetRecipeSteps(recipeID int64) ([]RecipeStep, error) {
+	rows, err := DB.Query(`
+		SELECT id, recipe_id, step_number, content, created_at
+		FROM recipe_steps
+		WHERE recipe_id = ?
+		ORDER BY step_number ASC
+	`, recipeID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var steps []RecipeStep
+	for rows.Next() {
+		var s RecipeStep
+		if err := rows.Scan(&s.ID, &s.RecipeID, &s.StepNumber, &s.Content, &s.CreatedAt); err != nil {
+			return nil, err
+		}
+		steps = append(steps, s)
+	}
+	return steps, rows.Err()
+}
+
+// CreateRecipe creates a new recipe and returns the freshly loaded row.
+func CreateRecipe(name, description string) (*Recipe, error) {
+	var maxOrder int
+	DB.QueryRow("SELECT COALESCE(MAX(sort_order), -1) FROM recipes").Scan(&maxOrder)
+
+	result, err := DB.Exec(`
+		INSERT INTO recipes (name, description, sort_order) VALUES (?, ?, ?)
+	`, name, description, maxOrder+1)
+	if err != nil {
+		return nil, err
+	}
+
+	id, _ := result.LastInsertId()
+	return GetRecipe(id)
+}
+
+// UpdateRecipe updates a recipe's name and description.
+func UpdateRecipe(id int64, name, description string) error {
+	_, err := DB.Exec(`
+		UPDATE recipes SET name = ?, description = ?, updated_at = strftime('%s', 'now')
+		WHERE id = ?
+	`, name, description, id)
+	return err
+}
+
+// DeleteRecipe deletes a recipe; FK CASCADE removes its ingredients and steps.
+func DeleteRecipe(id int64) error {
+	_, err := DB.Exec(`DELETE FROM recipes WHERE id = ?`, id)
+	return err
+}
+
+// SetRecipeCoverImage sets or clears (path == nil) the cover image path.
+func SetRecipeCoverImage(id int64, path *string) error {
+	if path == nil {
+		_, err := DB.Exec(`UPDATE recipes SET cover_image_path = NULL, updated_at = strftime('%s', 'now') WHERE id = ?`, id)
+		return err
+	}
+	_, err := DB.Exec(`UPDATE recipes SET cover_image_path = ?, updated_at = strftime('%s', 'now') WHERE id = ?`, *path, id)
+	return err
+}
+
+// MoveRecipeUp moves a recipe up in sort order. Mirrors MoveListUp.
+func MoveRecipeUp(id int64) error {
+	tx, err := DB.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	var currentOrder int
+	err = tx.QueryRow("SELECT sort_order FROM recipes WHERE id = ?", id).Scan(&currentOrder)
+	if err != nil {
+		return err
+	}
+	if currentOrder == 0 {
+		return nil
+	}
+	_, err = tx.Exec(`UPDATE recipes SET sort_order = sort_order + 1 WHERE sort_order = ?`, currentOrder-1)
+	if err != nil {
+		return err
+	}
+	_, err = tx.Exec(`UPDATE recipes SET sort_order = ?, updated_at = strftime('%s', 'now') WHERE id = ?`, currentOrder-1, id)
+	if err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// MoveRecipeDown moves a recipe down in sort order. Mirrors MoveListDown.
+func MoveRecipeDown(id int64) error {
+	tx, err := DB.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	var currentOrder, maxOrder int
+	err = tx.QueryRow("SELECT sort_order FROM recipes WHERE id = ?", id).Scan(&currentOrder)
+	if err != nil {
+		return err
+	}
+	err = tx.QueryRow("SELECT COALESCE(MAX(sort_order), -1) FROM recipes").Scan(&maxOrder)
+	if err != nil {
+		return err
+	}
+	if currentOrder >= maxOrder {
+		return nil
+	}
+	_, err = tx.Exec(`UPDATE recipes SET sort_order = sort_order - 1 WHERE sort_order = ?`, currentOrder+1)
+	if err != nil {
+		return err
+	}
+	_, err = tx.Exec(`UPDATE recipes SET sort_order = ?, updated_at = strftime('%s', 'now') WHERE id = ?`, currentOrder+1, id)
+	if err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// AddRecipeIngredient adds an ingredient to a recipe.
+// quantity is a pointer so callers can pass nil for "to taste".
+func AddRecipeIngredient(recipeID int64, name string, quantity *int, unit string) (*RecipeIngredient, error) {
+	var maxOrder int
+	DB.QueryRow("SELECT COALESCE(MAX(sort_order), -1) FROM recipe_ingredients WHERE recipe_id = ?", recipeID).Scan(&maxOrder)
+
+	var qtyArg interface{}
+	if quantity == nil {
+		qtyArg = nil
+	} else {
+		qtyArg = *quantity
+	}
+
+	result, err := DB.Exec(`
+		INSERT INTO recipe_ingredients (recipe_id, name, quantity, unit, sort_order)
+		VALUES (?, ?, ?, ?, ?)
+	`, recipeID, name, qtyArg, unit, maxOrder+1)
+	if err != nil {
+		return nil, err
+	}
+
+	id, _ := result.LastInsertId()
+	return GetRecipeIngredient(id)
+}
+
+// GetRecipeIngredient returns a single ingredient by ID.
+func GetRecipeIngredient(id int64) (*RecipeIngredient, error) {
+	var ri RecipeIngredient
+	var qty sql.NullInt64
+	err := DB.QueryRow(`
+		SELECT id, recipe_id, name, quantity, unit, sort_order, created_at
+		FROM recipe_ingredients WHERE id = ?
+	`, id).Scan(&ri.ID, &ri.RecipeID, &ri.Name, &qty, &ri.Unit, &ri.SortOrder, &ri.CreatedAt)
+	if err != nil {
+		return nil, err
+	}
+	if qty.Valid {
+		q := int(qty.Int64)
+		ri.Quantity = &q
+	}
+	return &ri, nil
+}
+
+// UpdateRecipeIngredient updates an ingredient's name, quantity, and unit.
+func UpdateRecipeIngredient(id int64, name string, quantity *int, unit string) error {
+	var qtyArg interface{}
+	if quantity == nil {
+		qtyArg = nil
+	} else {
+		qtyArg = *quantity
+	}
+	_, err := DB.Exec(`
+		UPDATE recipe_ingredients SET name = ?, quantity = ?, unit = ?
+		WHERE id = ?
+	`, name, qtyArg, unit, id)
+	return err
+}
+
+// DeleteRecipeIngredient deletes an ingredient.
+func DeleteRecipeIngredient(id int64) error {
+	_, err := DB.Exec(`DELETE FROM recipe_ingredients WHERE id = ?`, id)
+	return err
+}
+
+// ReorderRecipeIngredients sets sort_order based on each ID's position in orderedIDs.
+// All IDs must belong to the given recipe; mismatches are rejected before any update.
+func ReorderRecipeIngredients(recipeID int64, orderedIDs []int64) error {
+	tx, err := DB.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	for _, id := range orderedIDs {
+		var owner int64
+		if err := tx.QueryRow("SELECT recipe_id FROM recipe_ingredients WHERE id = ?", id).Scan(&owner); err != nil {
+			return fmt.Errorf("ingredient %d not found: %w", id, err)
+		}
+		if owner != recipeID {
+			return fmt.Errorf("ingredient %d does not belong to recipe %d", id, recipeID)
+		}
+	}
+
+	for pos, id := range orderedIDs {
+		if _, err := tx.Exec(`UPDATE recipe_ingredients SET sort_order = ? WHERE id = ?`, pos, id); err != nil {
+			return err
+		}
+	}
+
+	return tx.Commit()
+}
+
+// AddRecipeStep appends a step to a recipe with step_number = MAX+1 (1-based).
+func AddRecipeStep(recipeID int64, content string) (*RecipeStep, error) {
+	var maxStep int
+	DB.QueryRow("SELECT COALESCE(MAX(step_number), 0) FROM recipe_steps WHERE recipe_id = ?", recipeID).Scan(&maxStep)
+
+	result, err := DB.Exec(`
+		INSERT INTO recipe_steps (recipe_id, step_number, content) VALUES (?, ?, ?)
+	`, recipeID, maxStep+1, content)
+	if err != nil {
+		return nil, err
+	}
+
+	id, _ := result.LastInsertId()
+	return GetRecipeStep(id)
+}
+
+// GetRecipeStep returns a single step by ID.
+func GetRecipeStep(id int64) (*RecipeStep, error) {
+	var s RecipeStep
+	err := DB.QueryRow(`
+		SELECT id, recipe_id, step_number, content, created_at
+		FROM recipe_steps WHERE id = ?
+	`, id).Scan(&s.ID, &s.RecipeID, &s.StepNumber, &s.Content, &s.CreatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return &s, nil
+}
+
+// UpdateRecipeStep updates a step's content (step_number is managed by reorder/delete).
+func UpdateRecipeStep(id int64, content string) error {
+	_, err := DB.Exec(`UPDATE recipe_steps SET content = ? WHERE id = ?`, content, id)
+	return err
+}
+
+// DeleteRecipeStep deletes a step and renumbers the remaining steps so there are no gaps.
+func DeleteRecipeStep(id int64) error {
+	tx, err := DB.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	var recipeID int64
+	if err := tx.QueryRow("SELECT recipe_id FROM recipe_steps WHERE id = ?", id).Scan(&recipeID); err != nil {
+		return err
+	}
+
+	if _, err := tx.Exec("DELETE FROM recipe_steps WHERE id = ?", id); err != nil {
+		return err
+	}
+
+	rows, err := tx.Query(`
+		SELECT id FROM recipe_steps
+		WHERE recipe_id = ?
+		ORDER BY step_number ASC
+	`, recipeID)
+	if err != nil {
+		return err
+	}
+	var ids []int64
+	for rows.Next() {
+		var sid int64
+		if err := rows.Scan(&sid); err != nil {
+			rows.Close()
+			return err
+		}
+		ids = append(ids, sid)
+	}
+	rows.Close()
+
+	for i, sid := range ids {
+		if _, err := tx.Exec(`UPDATE recipe_steps SET step_number = ? WHERE id = ?`, i+1, sid); err != nil {
+			return err
+		}
+	}
+
+	return tx.Commit()
+}
+
+// ReorderRecipeSteps assigns step_number = position+1 for each ID in orderedIDs.
+// All IDs must belong to the given recipe.
+func ReorderRecipeSteps(recipeID int64, orderedIDs []int64) error {
+	tx, err := DB.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	for _, id := range orderedIDs {
+		var owner int64
+		if err := tx.QueryRow("SELECT recipe_id FROM recipe_steps WHERE id = ?", id).Scan(&owner); err != nil {
+			return fmt.Errorf("step %d not found: %w", id, err)
+		}
+		if owner != recipeID {
+			return fmt.Errorf("step %d does not belong to recipe %d", id, recipeID)
+		}
+	}
+
+	// Two-phase update to avoid step_number collisions: shift everyone into a
+	// disjoint range first, then assign final values.
+	if _, err := tx.Exec(`UPDATE recipe_steps SET step_number = step_number + 100000 WHERE recipe_id = ?`, recipeID); err != nil {
+		return err
+	}
+	for pos, id := range orderedIDs {
+		if _, err := tx.Exec(`UPDATE recipe_steps SET step_number = ? WHERE id = ?`, pos+1, id); err != nil {
+			return err
+		}
+	}
+
+	return tx.Commit()
+}
+
+// findItemByNameInListTx finds an item in any section of the given list (case-insensitive name match).
+// Returns nil, nil if no match. Used by ApplyRecipeToList.
+func findItemByNameInListTx(tx *sql.Tx, listID int64, name string) (*Item, error) {
+	var i Item
+	err := tx.QueryRow(`
+		SELECT i.id, i.section_id, i.name, i.description, i.completed, i.uncertain,
+		       COALESCE(i.quantity, 0), i.sort_order, i.created_at, COALESCE(i.updated_at, 0)
+		FROM items i
+		JOIN sections s ON s.id = i.section_id
+		WHERE s.list_id = ? AND LOWER(i.name) = LOWER(?)
+		LIMIT 1
+	`, listID, name).Scan(&i.ID, &i.SectionID, &i.Name, &i.Description, &i.Completed, &i.Uncertain,
+		&i.Quantity, &i.SortOrder, &i.CreatedAt, &i.UpdatedAt)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &i, nil
+}
+
+// findOrCreateRecipeIngredientsSectionTx finds (or creates) the "Recipe ingredients"
+// fallback section in the given list. Used when no history hint is available.
+func findOrCreateRecipeIngredientsSectionTx(tx *sql.Tx, listID int64) (int64, error) {
+	const fallbackName = "Recipe ingredients"
+
+	var existing int64
+	err := tx.QueryRow(`
+		SELECT id FROM sections WHERE list_id = ? AND LOWER(name) = LOWER(?) LIMIT 1
+	`, listID, fallbackName).Scan(&existing)
+	if err == nil {
+		return existing, nil
+	}
+	if err != sql.ErrNoRows {
+		return 0, err
+	}
+
+	var maxOrder int
+	tx.QueryRow("SELECT COALESCE(MAX(sort_order), -1) FROM sections WHERE list_id = ?", listID).Scan(&maxOrder)
+
+	result, err := tx.Exec(`
+		INSERT INTO sections (name, sort_order, list_id) VALUES (?, ?, ?)
+	`, fallbackName, maxOrder+1, listID)
+	if err != nil {
+		return 0, err
+	}
+	id, _ := result.LastInsertId()
+	return id, nil
+}
+
+// pickSectionForIngredientTx decides which section a NEW item should land in.
+// 1) If item_history.last_section_id points to a section in this list, use it.
+// 2) Otherwise fall back to the auto-created "Recipe ingredients" section.
+func pickSectionForIngredientTx(tx *sql.Tx, listID int64, name string) (int64, error) {
+	var lastSection sql.NullInt64
+	tx.QueryRow(`
+		SELECT last_section_id FROM item_history WHERE name = ? COLLATE NOCASE LIMIT 1
+	`, name).Scan(&lastSection)
+
+	if lastSection.Valid && lastSection.Int64 > 0 {
+		var ownerList int64
+		err := tx.QueryRow(`SELECT list_id FROM sections WHERE id = ?`, lastSection.Int64).Scan(&ownerList)
+		if err == nil && ownerList == listID {
+			return lastSection.Int64, nil
+		}
+	}
+
+	return findOrCreateRecipeIngredientsSectionTx(tx, listID)
+}
+
+// ApplyRecipeToList adds the chosen ingredients from a recipe to the target list.
+// Behavior per ingredient (case-insensitive name match within the target list):
+//   - existing active item: add this ingredient's quantity to it.
+//   - existing completed item: reactivate (completed=false) and add quantity.
+//   - no existing item: create a new one. Section comes from item_history.last_section_id
+//     (if it points to a section in this list), else from an auto-created
+//     "Recipe ingredients" section. Description is the human-formatted unit.
+//
+// "to taste" ingredients (quantity NULL) only ensure the item exists; quantity
+// is left unchanged on existing items, set to 0 on new items.
+//
+// All work happens in a single transaction.
+func ApplyRecipeToList(recipeID, targetListID int64, ingredientIDs []int64) error {
+	if len(ingredientIDs) == 0 {
+		return fmt.Errorf("no ingredients selected")
+	}
+
+	tx, err := DB.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	// Verify target list exists.
+	var listExists int
+	if err := tx.QueryRow(`SELECT COUNT(*) FROM lists WHERE id = ?`, targetListID).Scan(&listExists); err != nil {
+		return err
+	}
+	if listExists == 0 {
+		return fmt.Errorf("target list %d not found", targetListID)
+	}
+
+	// Build placeholder list for the ingredient ID filter.
+	placeholders := make([]string, len(ingredientIDs))
+	args := []interface{}{recipeID}
+	for i, id := range ingredientIDs {
+		placeholders[i] = "?"
+		args = append(args, id)
+	}
+
+	query := fmt.Sprintf(`
+		SELECT id, recipe_id, name, quantity, unit, sort_order
+		FROM recipe_ingredients
+		WHERE recipe_id = ? AND id IN (%s)
+		ORDER BY sort_order ASC
+	`, strings.Join(placeholders, ","))
+
+	rows, err := tx.Query(query, args...)
+	if err != nil {
+		return err
+	}
+	type chosen struct {
+		Name     string
+		Quantity *int
+		Unit     string
+	}
+	var picks []chosen
+	for rows.Next() {
+		var ri RecipeIngredient
+		var qty sql.NullInt64
+		if err := rows.Scan(&ri.ID, &ri.RecipeID, &ri.Name, &qty, &ri.Unit, &ri.SortOrder); err != nil {
+			rows.Close()
+			return err
+		}
+		c := chosen{Name: ri.Name, Unit: ri.Unit}
+		if qty.Valid {
+			q := int(qty.Int64)
+			c.Quantity = &q
+		}
+		picks = append(picks, c)
+	}
+	rows.Close()
+
+	if len(picks) == 0 {
+		return fmt.Errorf("no matching ingredients found in recipe")
+	}
+
+	for _, pick := range picks {
+		existing, err := findItemByNameInListTx(tx, targetListID, pick.Name)
+		if err != nil {
+			return err
+		}
+
+		// Quantity to add (0 for "to taste").
+		addQty := 0
+		if pick.Quantity != nil {
+			addQty = *pick.Quantity
+		}
+
+		if existing != nil {
+			// Active or completed match — add quantity (skip for "to taste").
+			newQty := existing.Quantity + addQty
+			if existing.Completed {
+				if _, err := tx.Exec(`
+					UPDATE items SET completed = FALSE, quantity = ?, updated_at = strftime('%s','now')
+					WHERE id = ?
+				`, newQty, existing.ID); err != nil {
+					return err
+				}
+			} else if addQty > 0 {
+				if _, err := tx.Exec(`
+					UPDATE items SET quantity = ?, updated_at = strftime('%s','now')
+					WHERE id = ?
+				`, newQty, existing.ID); err != nil {
+					return err
+				}
+			}
+			// History bump so suggestions stay fresh.
+			SaveItemHistoryTx(tx, pick.Name, existing.SectionID)
+			continue
+		}
+
+		// No existing item — create one.
+		sectionID, err := pickSectionForIngredientTx(tx, targetListID, pick.Name)
+		if err != nil {
+			return err
+		}
+
+		var maxItemOrder int
+		tx.QueryRow("SELECT COALESCE(MAX(sort_order), -1) FROM items WHERE section_id = ?", sectionID).Scan(&maxItemOrder)
+
+		if _, err := tx.Exec(`
+			INSERT INTO items (section_id, name, description, quantity, sort_order)
+			VALUES (?, ?, ?, ?, ?)
+		`, sectionID, pick.Name, formatUnitDescription(pick.Unit), addQty, maxItemOrder+1); err != nil {
+			return err
+		}
+
+		SaveItemHistoryTx(tx, pick.Name, sectionID)
+	}
+
+	return tx.Commit()
+}
+
+// formatUnitDescription mirrors handlers.formatUnitForDescription.
+// Defined here too because db/queries.go can't import the handlers package.
+func formatUnitDescription(unit string) string {
+	switch unit {
+	case "to_taste":
+		return "to taste"
+	case "fl_oz":
+		return "fl oz"
+	default:
+		return unit
+	}
+}
+
 // ==================== DATABASE CLEAR ====================
 
 // ClearAllData clears all user data from database (lists, sections, items, templates, history)
@@ -1902,6 +2573,20 @@ func ClearAllData() error {
 	// 6. item_history
 	if _, err := tx.Exec("DELETE FROM item_history"); err != nil {
 		return fmt.Errorf("failed to delete item_history: %w", err)
+	}
+
+	// 7. recipe_steps + recipe_ingredients (FK to recipes; deleted explicitly
+	//    so we don't depend on PRAGMA foreign_keys cascade order)
+	if _, err := tx.Exec("DELETE FROM recipe_steps"); err != nil {
+		return fmt.Errorf("failed to delete recipe_steps: %w", err)
+	}
+	if _, err := tx.Exec("DELETE FROM recipe_ingredients"); err != nil {
+		return fmt.Errorf("failed to delete recipe_ingredients: %w", err)
+	}
+
+	// 8. recipes
+	if _, err := tx.Exec("DELETE FROM recipes"); err != nil {
+		return fmt.Errorf("failed to delete recipes: %w", err)
 	}
 
 	// Note: sessions are NOT deleted - user remains logged in

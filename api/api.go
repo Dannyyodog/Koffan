@@ -67,4 +67,18 @@ func Register(app *fiber.App) {
 	v1.Post("/history", CreateHistory)
 	v1.Delete("/history/:id", DeleteHistory)
 	v1.Post("/history/batch-delete", BatchDeleteHistory)
+
+	// Recipes endpoints
+	v1.Get("/recipes", GetRecipes)
+	v1.Post("/recipes", CreateRecipe)
+	v1.Get("/recipes/:id", GetRecipe)
+	v1.Put("/recipes/:id", UpdateRecipe)
+	v1.Delete("/recipes/:id", DeleteRecipe)
+	v1.Post("/recipes/:id/ingredients", AddRecipeIngredient)
+	v1.Put("/recipes/:id/ingredients/:ingredientId", UpdateRecipeIngredient)
+	v1.Delete("/recipes/:id/ingredients/:ingredientId", DeleteRecipeIngredient)
+	v1.Post("/recipes/:id/steps", AddRecipeStep)
+	v1.Put("/recipes/:id/steps/:stepId", UpdateRecipeStep)
+	v1.Delete("/recipes/:id/steps/:stepId", DeleteRecipeStep)
+	v1.Post("/recipes/:id/apply", ApplyRecipe)
 }

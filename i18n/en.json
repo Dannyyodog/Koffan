@@ -151,7 +151,20 @@
     "apply_failed": "Failed to apply",
     "session_failed": "Session creation failed",
     "database_unavailable": "Database temporarily unavailable, please retry",
-    "database_error": "Database error"
+    "database_error": "Database error",
+    "recipe_not_found": "Recipe not found",
+    "recipe_name_required": "Recipe name is required",
+    "recipe_name_too_long": "Recipe name is too long",
+    "ingredient_name_required": "Ingredient name is required",
+    "ingredient_quantity_required": "Ingredient quantity is required (or use 'to taste')",
+    "ingredient_quantity_invalid": "Ingredient quantity must be a positive number",
+    "ingredient_not_found": "Ingredient not found",
+    "invalid_unit": "Invalid unit",
+    "step_content_required": "Step content is required",
+    "step_not_found": "Step not found",
+    "no_ingredients_selected": "Select at least one ingredient to add",
+    "invalid_apply_target": "Choose an existing list or create a new one",
+    "list_name_required": "List name is required"
   },
   "offline": {
     "title": "Offline mode",

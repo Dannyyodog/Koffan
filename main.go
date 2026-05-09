@@ -229,6 +229,25 @@ func main() {
 	app.Post("/templates/:id/apply", handlers.ApplyTemplate)
 	app.Post("/templates/from-list", handlers.CreateTemplateFromList)
 
+	// Recipes API
+	app.Get("/recipes", handlers.GetRecipesPage)
+	app.Get("/recipes/list", handlers.GetRecipes)
+	app.Get("/recipes/:id", handlers.GetRecipe)
+	app.Post("/recipes", handlers.CreateRecipe)
+	app.Put("/recipes/:id", handlers.UpdateRecipe)
+	app.Delete("/recipes/:id", handlers.DeleteRecipe)
+	app.Post("/recipes/:id/move-up", handlers.MoveRecipeUp)
+	app.Post("/recipes/:id/move-down", handlers.MoveRecipeDown)
+	app.Post("/recipes/:id/ingredients", handlers.AddRecipeIngredient)
+	app.Put("/recipes/:id/ingredients/:ingredientId", handlers.UpdateRecipeIngredient)
+	app.Delete("/recipes/:id/ingredients/:ingredientId", handlers.DeleteRecipeIngredient)
+	app.Post("/recipes/:id/ingredients/reorder", handlers.ReorderRecipeIngredients)
+	app.Post("/recipes/:id/steps", handlers.AddRecipeStep)
+	app.Put("/recipes/:id/steps/:stepId", handlers.UpdateRecipeStep)
+	app.Delete("/recipes/:id/steps/:stepId", handlers.DeleteRecipeStep)
+	app.Post("/recipes/:id/steps/reorder", handlers.ReorderRecipeSteps)
+	app.Post("/recipes/:id/apply", handlers.ApplyRecipe)
+
 	// Items API
 	app.Get("/items/:id/html", handlers.GetItemHTML)
 	app.Post("/items", handlers.CreateItem)

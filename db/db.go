@@ -177,6 +177,11 @@ func runMigrations() {
 
 	// Migration: Add show_completed to lists
 	migrateListShowCompleted()
+
+	// Migration: Recipes support (recipes -> ingredients/steps via FK CASCADE)
+	migrateRecipes()
+	migrateRecipeIngredients()
+	migrateRecipeSteps()
 }
 
 func migrateToMultipleLists() {
@@ -374,6 +379,108 @@ func migrateListShowCompleted() {
 	}
 
 	log.Println("Migration completed: List show_completed added")
+}
+
+func migrateRecipes() {
+	var count int
+	err := DB.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='recipes'").Scan(&count)
+	if err != nil {
+		log.Println("Migration check failed:", err)
+		return
+	}
+
+	if count > 0 {
+		return // Already migrated
+	}
+
+	log.Println("Running migration: Adding recipes table...")
+
+	_, err = DB.Exec(`
+		CREATE TABLE IF NOT EXISTS recipes (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			name TEXT NOT NULL,
+			description TEXT DEFAULT '',
+			cover_image_path TEXT DEFAULT NULL,
+			sort_order INTEGER NOT NULL,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			updated_at INTEGER DEFAULT (strftime('%s', 'now'))
+		);
+		CREATE INDEX IF NOT EXISTS idx_recipes_order ON recipes(sort_order);
+	`)
+	if err != nil {
+		log.Println("Migration failed - creating recipes table:", err)
+		return
+	}
+
+	log.Println("Migration completed: Recipes table added")
+}
+
+func migrateRecipeIngredients() {
+	var count int
+	err := DB.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='recipe_ingredients'").Scan(&count)
+	if err != nil {
+		log.Println("Migration check failed:", err)
+		return
+	}
+
+	if count > 0 {
+		return // Already migrated
+	}
+
+	log.Println("Running migration: Adding recipe_ingredients table...")
+
+	_, err = DB.Exec(`
+		CREATE TABLE IF NOT EXISTS recipe_ingredients (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			recipe_id INTEGER NOT NULL,
+			name TEXT NOT NULL,
+			quantity INTEGER DEFAULT NULL,
+			unit TEXT NOT NULL DEFAULT 'whole',
+			sort_order INTEGER NOT NULL,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			FOREIGN KEY (recipe_id) REFERENCES recipes(id) ON DELETE CASCADE
+		);
+		CREATE INDEX IF NOT EXISTS idx_recipe_ingredients_recipe ON recipe_ingredients(recipe_id, sort_order);
+	`)
+	if err != nil {
+		log.Println("Migration failed - creating recipe_ingredients table:", err)
+		return
+	}
+
+	log.Println("Migration completed: Recipe ingredients table added")
+}
+
+func migrateRecipeSteps() {
+	var count int
+	err := DB.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='recipe_steps'").Scan(&count)
+	if err != nil {
+		log.Println("Migration check failed:", err)
+		return
+	}
+
+	if count > 0 {
+		return // Already migrated
+	}
+
+	log.Println("Running migration: Adding recipe_steps table...")
+
+	_, err = DB.Exec(`
+		CREATE TABLE IF NOT EXISTS recipe_steps (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			recipe_id INTEGER NOT NULL,
+			step_number INTEGER NOT NULL,
+			content TEXT NOT NULL,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			FOREIGN KEY (recipe_id) REFERENCES recipes(id) ON DELETE CASCADE
+		);
+		CREATE INDEX IF NOT EXISTS idx_recipe_steps_recipe ON recipe_steps(recipe_id, step_number);
+	`)
+	if err != nil {
+		log.Println("Migration failed - creating recipe_steps table:", err)
+		return
+	}
+
+	log.Println("Migration completed: Recipe steps table added")
 }
 
 func Close() {
