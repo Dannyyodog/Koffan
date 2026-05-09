@@ -198,6 +198,53 @@
         </div>
         {{end}}
 
+        <!-- Recipes Section -->
+        <section class="mt-8">
+            <header class="flex items-center justify-between mb-4">
+                <h2 class="text-lg font-semibold text-stone-800 dark:text-stone-100" x-text="t('recipes.title')"></h2>
+                <button
+                    @click="showCreateRecipeModal = true; newRecipeName = ''; newRecipeDescription = ''; newRecipeNameError = ''"
+                    class="flex items-center gap-1.5 text-sm font-medium text-pink-500 hover:text-pink-600 dark:text-pink-400 dark:hover:text-pink-300 transition-colors"
+                    :title="t('recipes.create')"
+                >
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path>
+                    </svg>
+                    <span x-text="t('recipes.create')"></span>
+                </button>
+            </header>
+
+            <div x-show="recipes.length === 0" x-cloak
+                 class="bg-white dark:bg-stone-800 rounded-xl border border-stone-200 dark:border-stone-700 border-dashed p-6 text-center">
+                <div class="w-12 h-12 mx-auto mb-3 rounded-xl bg-stone-50 dark:bg-stone-700 flex items-center justify-center">
+                    <!-- fork-and-knife icon -->
+                    <svg class="w-6 h-6 text-stone-400 dark:text-stone-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M5 3v8m0 0a2 2 0 002 2v7a1 1 0 001 1h0a1 1 0 001-1v-7a2 2 0 002-2V3M7 3v4m-4-4h4M16 3v8.5a2.5 2.5 0 002.5 2.5H19v6a1 1 0 001 1h0a1 1 0 001-1V3"></path>
+                    </svg>
+                </div>
+                <p class="text-sm text-stone-500 dark:text-stone-400" x-text="t('recipes.empty')"></p>
+            </div>
+
+            <div x-show="recipes.length > 0" x-cloak class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
+                <template x-for="recipe in recipes" :key="recipe.id">
+                    <a :href="'/recipes/' + recipe.id"
+                       class="bg-white dark:bg-stone-800 rounded-xl border border-stone-200 dark:border-stone-700 hover:border-pink-200 dark:hover:border-pink-700 hover:shadow-md transition-all overflow-hidden flex flex-col">
+                        <!-- Cover placeholder (no image yet — that's the other branch) -->
+                        <div class="aspect-square bg-stone-100 dark:bg-stone-700 flex items-center justify-center">
+                            <svg class="w-10 h-10 text-stone-300 dark:text-stone-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M5 3v8m0 0a2 2 0 002 2v7a1 1 0 001 1h0a1 1 0 001-1v-7a2 2 0 002-2V3M7 3v4m-4-4h4M16 3v8.5a2.5 2.5 0 002.5 2.5H19v6a1 1 0 001 1h0a1 1 0 001-1V3"></path>
+                            </svg>
+                        </div>
+                        <div class="p-3">
+                            <h3 class="text-sm font-medium text-stone-800 dark:text-stone-100 truncate" x-text="recipe.name"></h3>
+                            <p class="text-xs text-stone-500 dark:text-stone-400 mt-0.5"
+                               x-text="t('recipes.ingredient_count', { count: recipe.ingredient_count || 0 })"></p>
+                        </div>
+                    </a>
+                </template>
+            </div>
+        </section>
+
         {{if .Lists}}
         <!-- Templates Section -->
         {{if .Templates}}
@@ -279,6 +326,49 @@
                         class="flex-1 bg-pink-400 hover:bg-pink-500 text-white py-3 rounded-lg text-sm font-medium transition-colors"
                         x-text="editingList ? t('common.save') : t('common.create')">
                     </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Create Recipe Modal -->
+    <div x-show="showCreateRecipeModal" x-cloak class="fixed inset-0 z-50 flex items-end md:items-center justify-center">
+        <div class="absolute inset-0 bg-black/40 dark:bg-black/60 backdrop-blur-sm"
+             @click="showCreateRecipeModal = false"></div>
+        <div class="relative bg-white dark:bg-stone-800 rounded-t-2xl md:rounded-2xl w-full md:max-w-md p-6"
+             x-transition:enter="transition ease-out duration-200"
+             x-transition:enter-start="translate-y-full md:translate-y-0 md:scale-95 opacity-0"
+             x-transition:enter-end="translate-y-0 md:scale-100 opacity-100">
+            <h3 class="text-lg font-semibold text-stone-800 dark:text-stone-100 mb-4" x-text="t('recipes.create')"></h3>
+            <form @submit.prevent="createRecipe()" class="space-y-4">
+                <div>
+                    <label class="block text-sm font-medium text-stone-600 dark:text-stone-400 mb-2" x-text="t('common.name')"></label>
+                    <input type="text"
+                           x-model="newRecipeName"
+                           @input="newRecipeNameError = ''"
+                           :placeholder="t('recipes.name_placeholder')"
+                           required
+                           maxlength="100"
+                           :class="newRecipeNameError ? 'border-rose-400 dark:border-rose-500' : 'border-stone-200 dark:border-stone-600'"
+                           class="w-full border dark:bg-stone-700 dark:text-stone-100 rounded-lg px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-pink-400 focus:border-transparent">
+                    <p x-show="newRecipeNameError" x-cloak x-text="newRecipeNameError" class="mt-1.5 text-sm text-rose-500 dark:text-rose-400"></p>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-stone-600 dark:text-stone-400 mb-2" x-text="t('common.description')"></label>
+                    <textarea x-model="newRecipeDescription"
+                              :placeholder="t('recipes.description_placeholder')"
+                              rows="2"
+                              maxlength="500"
+                              class="w-full border border-stone-200 dark:border-stone-600 dark:bg-stone-700 dark:text-stone-100 rounded-lg px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-pink-400 focus:border-transparent resize-none"></textarea>
+                </div>
+                <div class="flex gap-3 pt-2">
+                    <button type="button"
+                            @click="showCreateRecipeModal = false"
+                            class="flex-1 border border-stone-200 dark:border-stone-600 text-stone-600 dark:text-stone-300 py-3 rounded-lg text-sm font-medium hover:bg-stone-50 dark:hover:bg-stone-700 transition-colors"
+                            x-text="t('common.cancel')"></button>
+                    <button type="submit"
+                            class="flex-1 bg-pink-400 hover:bg-pink-500 text-white py-3 rounded-lg text-sm font-medium transition-colors"
+                            x-text="t('common.create')"></button>
                 </div>
             </form>
         </div>
@@ -675,6 +765,13 @@ function homePage() {
         selectedIcon: '🛒',
         icons: ['🛒', '🏠', '🎁', '🎄', '🎂', '🍕', '🥗', '💊', '🐕', '🧹', '📦', '✈️', '🏋️', '📚', '🛠️', '💼'],
         isOnline: navigator.onLine,
+
+        // Recipes section
+        recipes: [],
+        showCreateRecipeModal: false,
+        newRecipeName: '',
+        newRecipeDescription: '',
+        newRecipeNameError: '',
         // WebSocket
         ws: null,
         _wsInitialized: false,
@@ -690,8 +787,8 @@ function homePage() {
         clearDatabaseInput: '',
         clearDatabaseLoading: false,
 
-        t(key) {
-            return window.t ? window.t(key) : key;
+        t(key, params) {
+            return window.t ? window.t(key, params) : key;
         },
 
         async init() {
@@ -714,6 +811,52 @@ function homePage() {
 
             // Pre-cache all lists for offline use
             this.preCacheLists();
+
+            // Load recipes (don't block on this)
+            this.loadRecipes();
+        },
+
+        async loadRecipes() {
+            try {
+                const response = await fetch('/recipes/list', { headers: { 'Accept': 'application/json' } });
+                if (!response.ok) return;
+                const data = await response.json();
+                this.recipes = Array.isArray(data) ? data : [];
+            } catch (e) {
+                console.error('[Home] Failed to load recipes:', e);
+            }
+        },
+
+        async createRecipe() {
+            const name = (this.newRecipeName || '').trim();
+            if (!name) {
+                this.newRecipeNameError = this.t('error.recipe_name_required');
+                return;
+            }
+            try {
+                const formData = new FormData();
+                formData.append('name', name);
+                if (this.newRecipeDescription) formData.append('description', this.newRecipeDescription);
+                const response = await fetch('/recipes', { method: 'POST', body: formData });
+                if (!response.ok) {
+                    const errText = await response.text();
+                    this.newRecipeNameError = errText || this.t('error.create_failed');
+                    return;
+                }
+                const recipe = await response.json();
+                // Append optimistically; WebSocket may also broadcast, our loadRecipes()
+                // refresh in the WS handler will dedup by reloading the whole list.
+                if (recipe && recipe.id && !this.recipes.find(r => r.id === recipe.id)) {
+                    this.recipes.push({ ...recipe, ingredient_count: 0 });
+                }
+                this.showCreateRecipeModal = false;
+                this.newRecipeName = '';
+                this.newRecipeDescription = '';
+                this.newRecipeNameError = '';
+            } catch (e) {
+                console.error('[Home] Failed to create recipe:', e);
+                this.newRecipeNameError = this.t('error.create_failed');
+            }
         },
 
         preCacheLists() {
@@ -853,6 +996,15 @@ function homePage() {
                     case 'section_items_checked':
                     case 'section_items_unchecked':
                         this.refreshListStats();
+                        break;
+                    case 'recipe_created':
+                    case 'recipe_updated':
+                    case 'recipe_deleted':
+                    case 'recipe_ingredient_created':
+                    case 'recipe_ingredient_deleted':
+                        // Reload the whole list — simpler than reconciling individual events
+                        // and ingredient_count needs to update on add/remove.
+                        this.loadRecipes();
                         break;
                 }
             } catch (e) {

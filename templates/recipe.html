@@ -1,0 +1,406 @@
+{{define "recipe"}}
+<div x-data="recipeView({{.Recipe.ID}})" x-init="init()" class="min-h-screen bg-stone-50 dark:bg-stone-900 transition-colors pb-32">
+    <!-- Header -->
+    <header class="sticky top-0 z-30 bg-stone-50 dark:bg-stone-900 pt-3 transition-colors">
+        <div class="container mx-auto max-w-3xl px-4">
+            <div class="flex items-center justify-between h-14 mb-4 gap-3">
+                <div class="flex items-center gap-2 md:gap-3 overflow-hidden">
+                    <a href="/" class="flex-shrink-0 -ml-2 p-2 text-stone-500 dark:text-stone-400 hover:text-stone-700 dark:hover:text-stone-200 rounded-lg transition-colors"
+                       :title="t('recipes.back_to_home')">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"></path>
+                        </svg>
+                    </a>
+                    <h1 class="text-base md:text-xl font-semibold text-stone-800 dark:text-stone-100 truncate" x-text="recipe.name || ''"></h1>
+                </div>
+                <div class="flex items-center gap-1 flex-shrink-0">
+                    <button @click="openRenameModal()"
+                            class="p-2 text-stone-400 dark:text-stone-500 hover:text-stone-600 dark:hover:text-stone-300 rounded-lg hover:bg-stone-100 dark:hover:bg-stone-700 transition-colors"
+                            :title="t('recipes.rename')">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path>
+                        </svg>
+                    </button>
+                    <button @click="confirmDeleteRecipe()"
+                            class="p-2 text-rose-400 dark:text-rose-500 hover:text-rose-600 dark:hover:text-rose-400 rounded-lg hover:bg-rose-50 dark:hover:bg-rose-900/30 transition-colors"
+                            :title="t('recipes.delete')">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
+                        </svg>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <div class="container mx-auto max-w-3xl px-4">
+        <!-- Description -->
+        <p x-show="recipe.description" x-cloak
+           class="text-sm text-stone-600 dark:text-stone-300 mb-6 whitespace-pre-line"
+           x-text="recipe.description"></p>
+
+        <!-- Ingredients -->
+        <section class="mb-8">
+            <h2 class="text-sm font-semibold uppercase tracking-wide text-stone-500 dark:text-stone-400 mb-3"
+                x-text="t('recipes.ingredients_heading')"></h2>
+
+            <div class="bg-white dark:bg-stone-800 rounded-xl border border-stone-200 dark:border-stone-700 overflow-hidden">
+                <div id="ingredients-list" class="divide-y divide-stone-100 dark:divide-stone-700">
+                    <template x-for="ing in recipe.ingredients" :key="ing.id">
+                        <div :data-ingredient-id="ing.id"
+                             class="ingredient-row group">
+                            <!-- View row -->
+                            <div x-show="editingIngredientId !== ing.id"
+                                 @click="startEditIngredient(ing)"
+                                 class="flex items-center gap-2 px-4 py-3 cursor-pointer hover:bg-stone-50 dark:hover:bg-stone-700/50 transition-colors">
+                                <!-- Drag handle -->
+                                <div class="drag-handle flex-shrink-0 w-5 h-8 flex items-center justify-center -ml-1 touch-none cursor-grab active:cursor-grabbing text-stone-300 dark:text-stone-600 hover:text-stone-400 dark:hover:text-stone-500"
+                                     @click.stop>
+                                    <svg class="w-4 h-5" fill="currentColor" viewBox="0 0 24 24">
+                                        <circle cx="9" cy="5" r="1.5"/>
+                                        <circle cx="15" cy="5" r="1.5"/>
+                                        <circle cx="9" cy="12" r="1.5"/>
+                                        <circle cx="15" cy="12" r="1.5"/>
+                                        <circle cx="9" cy="19" r="1.5"/>
+                                        <circle cx="15" cy="19" r="1.5"/>
+                                    </svg>
+                                </div>
+                                <p class="flex-1 text-sm text-stone-700 dark:text-stone-200 truncate"
+                                   x-text="formatIngredient(ing)"></p>
+                                <button type="button"
+                                        @click.stop="deleteIngredient(ing)"
+                                        class="p-1.5 rounded-md text-stone-300 dark:text-stone-500 hover:text-red-500 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30 opacity-0 group-hover:opacity-100 md:opacity-100 transition-opacity"
+                                        :title="t('common.delete')">
+                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                                    </svg>
+                                </button>
+                            </div>
+                            <!-- Edit row -->
+                            <form x-show="editingIngredientId === ing.id" x-cloak
+                                  @submit.prevent="saveIngredient(ing)"
+                                  class="px-4 py-3 space-y-2 bg-stone-50 dark:bg-stone-700/30">
+                                <input type="text"
+                                       x-model="editIngredientName"
+                                       :placeholder="t('recipes.ingredient_name_placeholder')"
+                                       maxlength="100"
+                                       required
+                                       class="w-full border border-stone-200 dark:border-stone-600 dark:bg-stone-700 dark:text-stone-100 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-pink-400">
+                                <div class="flex gap-2">
+                                    <select x-model="editIngredientUnit"
+                                            class="border border-stone-200 dark:border-stone-600 dark:bg-stone-700 dark:text-stone-100 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-pink-400 flex-shrink-0 w-28">
+                                        <template x-for="u in unitOptions" :key="u">
+                                            <option :value="u" x-text="t('units.' + u)"></option>
+                                        </template>
+                                    </select>
+                                    <input x-show="editIngredientUnit !== 'to_taste'"
+                                           type="number" min="1" max="9999"
+                                           x-model.number="editIngredientQty"
+                                           :placeholder="t('recipes.quantity_label')"
+                                           class="border border-stone-200 dark:border-stone-600 dark:bg-stone-700 dark:text-stone-100 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-pink-400 flex-1">
+                                </div>
+                                <div class="flex gap-2 pt-1">
+                                    <button type="button"
+                                            @click="cancelEditIngredient()"
+                                            class="flex-1 border border-stone-200 dark:border-stone-600 text-stone-600 dark:text-stone-300 py-2 rounded-lg text-sm font-medium"
+                                            x-text="t('common.cancel')"></button>
+                                    <button type="submit"
+                                            class="flex-1 bg-pink-400 hover:bg-pink-500 text-white py-2 rounded-lg text-sm font-medium"
+                                            x-text="t('common.save')"></button>
+                                </div>
+                            </form>
+                        </div>
+                    </template>
+                </div>
+
+                <!-- Empty state -->
+                <p x-show="recipe.ingredients && recipe.ingredients.length === 0 && !addingIngredient" x-cloak
+                   class="px-4 py-6 text-center text-sm text-stone-400 dark:text-stone-500"
+                   x-text="t('recipes.no_ingredients')"></p>
+
+                <!-- Add ingredient inline form -->
+                <form x-show="addingIngredient" x-cloak
+                      @submit.prevent="submitAddIngredient()"
+                      class="px-4 py-3 space-y-2 border-t border-stone-100 dark:border-stone-700 bg-stone-50 dark:bg-stone-700/30">
+                    <input type="text"
+                           x-ref="newIngName"
+                           x-model="newIngredientName"
+                           :placeholder="t('recipes.ingredient_name_placeholder')"
+                           maxlength="100"
+                           required
+                           class="w-full border border-stone-200 dark:border-stone-600 dark:bg-stone-700 dark:text-stone-100 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-pink-400">
+                    <div class="flex gap-2">
+                        <select x-model="newIngredientUnit"
+                                class="border border-stone-200 dark:border-stone-600 dark:bg-stone-700 dark:text-stone-100 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-pink-400 flex-shrink-0 w-28">
+                            <template x-for="u in unitOptions" :key="u">
+                                <option :value="u" x-text="t('units.' + u)"></option>
+                            </template>
+                        </select>
+                        <input x-show="newIngredientUnit !== 'to_taste'"
+                               type="number" min="1" max="9999"
+                               x-model.number="newIngredientQty"
+                               :placeholder="t('recipes.quantity_label')"
+                               class="border border-stone-200 dark:border-stone-600 dark:bg-stone-700 dark:text-stone-100 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-pink-400 flex-1">
+                    </div>
+                    <div class="flex gap-2 pt-1">
+                        <button type="button"
+                                @click="cancelAddIngredient()"
+                                class="flex-1 border border-stone-200 dark:border-stone-600 text-stone-600 dark:text-stone-300 py-2 rounded-lg text-sm font-medium"
+                                x-text="t('common.cancel')"></button>
+                        <button type="submit"
+                                class="flex-1 bg-pink-400 hover:bg-pink-500 text-white py-2 rounded-lg text-sm font-medium"
+                                x-text="t('common.add')"></button>
+                    </div>
+                </form>
+            </div>
+        </section>
+
+        <!-- Steps -->
+        <section class="mb-8">
+            <h2 class="text-sm font-semibold uppercase tracking-wide text-stone-500 dark:text-stone-400 mb-3"
+                x-text="t('recipes.steps_heading')"></h2>
+
+            <div class="bg-white dark:bg-stone-800 rounded-xl border border-stone-200 dark:border-stone-700 overflow-hidden">
+                <div id="steps-list" class="divide-y divide-stone-100 dark:divide-stone-700">
+                    <template x-for="step in recipe.steps" :key="step.id">
+                        <div :data-step-id="step.id" class="step-row group">
+                            <!-- View row -->
+                            <div x-show="editingStepId !== step.id"
+                                 @click="startEditStep(step)"
+                                 class="flex items-start gap-3 px-4 py-3 cursor-pointer hover:bg-stone-50 dark:hover:bg-stone-700/50 transition-colors">
+                                <div class="drag-handle flex-shrink-0 w-5 h-8 flex items-center justify-center -ml-1 touch-none cursor-grab active:cursor-grabbing text-stone-300 dark:text-stone-600 hover:text-stone-400 dark:hover:text-stone-500 mt-0.5"
+                                     @click.stop>
+                                    <svg class="w-4 h-5" fill="currentColor" viewBox="0 0 24 24">
+                                        <circle cx="9" cy="5" r="1.5"/>
+                                        <circle cx="15" cy="5" r="1.5"/>
+                                        <circle cx="9" cy="12" r="1.5"/>
+                                        <circle cx="15" cy="12" r="1.5"/>
+                                        <circle cx="9" cy="19" r="1.5"/>
+                                        <circle cx="15" cy="19" r="1.5"/>
+                                    </svg>
+                                </div>
+                                <span class="flex-shrink-0 inline-flex items-center justify-center w-6 h-6 rounded-full bg-pink-50 dark:bg-pink-900/40 text-pink-500 dark:text-pink-300 text-xs font-medium tabular-nums mt-0.5"
+                                      x-text="step.step_number"></span>
+                                <p class="flex-1 text-sm text-stone-700 dark:text-stone-200 whitespace-pre-line break-words"
+                                   x-text="step.content"></p>
+                                <button type="button"
+                                        @click.stop="deleteStep(step)"
+                                        class="p-1.5 rounded-md text-stone-300 dark:text-stone-500 hover:text-red-500 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30 opacity-0 group-hover:opacity-100 md:opacity-100 transition-opacity flex-shrink-0"
+                                        :title="t('common.delete')">
+                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                                    </svg>
+                                </button>
+                            </div>
+                            <!-- Edit row -->
+                            <form x-show="editingStepId === step.id" x-cloak
+                                  @submit.prevent="saveStep(step)"
+                                  class="px-4 py-3 space-y-2 bg-stone-50 dark:bg-stone-700/30">
+                                <textarea x-model="editStepContent"
+                                          :placeholder="t('recipes.step_placeholder')"
+                                          rows="3"
+                                          maxlength="1000"
+                                          required
+                                          class="w-full border border-stone-200 dark:border-stone-600 dark:bg-stone-700 dark:text-stone-100 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-pink-400 resize-y"></textarea>
+                                <div class="flex gap-2">
+                                    <button type="button"
+                                            @click="cancelEditStep()"
+                                            class="flex-1 border border-stone-200 dark:border-stone-600 text-stone-600 dark:text-stone-300 py-2 rounded-lg text-sm font-medium"
+                                            x-text="t('common.cancel')"></button>
+                                    <button type="submit"
+                                            class="flex-1 bg-pink-400 hover:bg-pink-500 text-white py-2 rounded-lg text-sm font-medium"
+                                            x-text="t('common.save')"></button>
+                                </div>
+                            </form>
+                        </div>
+                    </template>
+                </div>
+
+                <!-- Empty state -->
+                <p x-show="recipe.steps && recipe.steps.length === 0 && !addingStep" x-cloak
+                   class="px-4 py-6 text-center text-sm text-stone-400 dark:text-stone-500"
+                   x-text="t('recipes.no_steps')"></p>
+
+                <!-- Add step inline form -->
+                <form x-show="addingStep" x-cloak
+                      @submit.prevent="submitAddStep()"
+                      class="px-4 py-3 space-y-2 border-t border-stone-100 dark:border-stone-700 bg-stone-50 dark:bg-stone-700/30">
+                    <textarea x-ref="newStepContent"
+                              x-model="newStepContent"
+                              :placeholder="t('recipes.step_placeholder')"
+                              rows="3"
+                              maxlength="1000"
+                              required
+                              class="w-full border border-stone-200 dark:border-stone-600 dark:bg-stone-700 dark:text-stone-100 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-pink-400 resize-y"></textarea>
+                    <div class="flex gap-2">
+                        <button type="button"
+                                @click="cancelAddStep()"
+                                class="flex-1 border border-stone-200 dark:border-stone-600 text-stone-600 dark:text-stone-300 py-2 rounded-lg text-sm font-medium"
+                                x-text="t('common.cancel')"></button>
+                        <button type="submit"
+                                class="flex-1 bg-pink-400 hover:bg-pink-500 text-white py-2 rounded-lg text-sm font-medium"
+                                x-text="t('common.add')"></button>
+                    </div>
+                </form>
+
+                <!-- Add step button at bottom of steps list -->
+                <button x-show="!addingStep"
+                        @click="startAddStep()"
+                        class="w-full px-4 py-3 border-t border-stone-100 dark:border-stone-700 text-sm text-stone-500 dark:text-stone-400 hover:text-pink-500 dark:hover:text-pink-400 hover:bg-stone-50 dark:hover:bg-stone-700/50 transition-colors flex items-center justify-center gap-2">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path>
+                    </svg>
+                    <span x-text="t('recipes.add_step')"></span>
+                </button>
+            </div>
+        </section>
+    </div>
+
+    <!-- Floating + button (bottom-right) + popup menu -->
+    <div class="fixed bottom-6 right-6 z-40 flex flex-col items-end gap-2 safe-area-pb"
+         style="padding-bottom: max(0.5rem, env(safe-area-inset-bottom));">
+        <!-- Action menu (renders ABOVE the +) -->
+        <div x-show="showActionMenu" x-cloak
+             x-transition:enter="transition ease-out duration-150"
+             x-transition:enter-start="opacity-0 translate-y-2"
+             x-transition:enter-end="opacity-100 translate-y-0"
+             @click.outside="showActionMenu = false"
+             class="bg-white dark:bg-stone-800 rounded-xl border border-stone-200 dark:border-stone-700 shadow-xl py-2 min-w-56 mb-1">
+            <button @click="showActionMenu = false; startAddIngredient()"
+                    class="w-full px-4 py-2.5 text-left text-sm text-stone-700 dark:text-stone-200 hover:bg-stone-50 dark:hover:bg-stone-700 flex items-center gap-3">
+                <svg class="w-4 h-4 text-pink-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path>
+                </svg>
+                <span x-text="t('recipes.add_ingredient')"></span>
+            </button>
+            <button @click="showActionMenu = false; openApplyModal()"
+                    class="w-full px-4 py-2.5 text-left text-sm text-stone-700 dark:text-stone-200 hover:bg-stone-50 dark:hover:bg-stone-700 flex items-center gap-3">
+                <svg class="w-4 h-4 text-pink-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"></path>
+                </svg>
+                <span x-text="t('recipes.add_to_list')"></span>
+            </button>
+        </div>
+        <button @click="showActionMenu = !showActionMenu"
+                class="w-14 h-14 rounded-full bg-pink-400 hover:bg-pink-500 text-white shadow-lg flex items-center justify-center transition-colors"
+                :class="showActionMenu && 'rotate-45'"
+                style="transition: transform 0.15s ease, background-color 0.15s ease;"
+                :title="t('common.add')">
+            <svg class="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path>
+            </svg>
+        </button>
+    </div>
+
+    <!-- Rename Modal -->
+    <div x-show="showRenameModal" x-cloak class="fixed inset-0 z-50 flex items-end md:items-center justify-center">
+        <div class="absolute inset-0 bg-black/40 dark:bg-black/60 backdrop-blur-sm" @click="showRenameModal = false"></div>
+        <div class="relative bg-white dark:bg-stone-800 rounded-t-2xl md:rounded-2xl w-full md:max-w-md p-6">
+            <h3 class="text-lg font-semibold text-stone-800 dark:text-stone-100 mb-4" x-text="t('common.edit')"></h3>
+            <form @submit.prevent="saveRename()" class="space-y-4">
+                <div>
+                    <label class="block text-sm font-medium text-stone-600 dark:text-stone-400 mb-2" x-text="t('common.name')"></label>
+                    <input type="text"
+                           x-model="renameName"
+                           :placeholder="t('recipes.name_placeholder')"
+                           required
+                           maxlength="100"
+                           class="w-full border border-stone-200 dark:border-stone-600 dark:bg-stone-700 dark:text-stone-100 rounded-lg px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-pink-400">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-stone-600 dark:text-stone-400 mb-2" x-text="t('common.description')"></label>
+                    <textarea x-model="renameDescription"
+                              :placeholder="t('recipes.description_placeholder')"
+                              rows="2"
+                              maxlength="500"
+                              class="w-full border border-stone-200 dark:border-stone-600 dark:bg-stone-700 dark:text-stone-100 rounded-lg px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-pink-400 resize-none"></textarea>
+                </div>
+                <div class="flex gap-3 pt-2">
+                    <button type="button" @click="showRenameModal = false"
+                            class="flex-1 border border-stone-200 dark:border-stone-600 text-stone-600 dark:text-stone-300 py-3 rounded-lg text-sm font-medium hover:bg-stone-50 dark:hover:bg-stone-700"
+                            x-text="t('common.cancel')"></button>
+                    <button type="submit"
+                            class="flex-1 bg-pink-400 hover:bg-pink-500 text-white py-3 rounded-lg text-sm font-medium"
+                            x-text="t('common.save')"></button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Apply-to-list Modal -->
+    <div x-show="showApplyModal" x-cloak class="fixed inset-0 z-50 flex items-end md:items-center justify-center">
+        <div class="absolute inset-0 bg-black/40 dark:bg-black/60 backdrop-blur-sm" @click="showApplyModal = false"></div>
+        <div class="mobile-sheet mobile-sheet-scroll relative bg-white dark:bg-stone-800 rounded-t-2xl md:rounded-2xl w-full md:max-w-lg p-6"
+             style="padding-bottom: max(1.5rem, env(safe-area-inset-bottom));">
+            <div class="flex items-center justify-between mb-4">
+                <h3 class="text-lg font-semibold text-stone-800 dark:text-stone-100" x-text="t('recipes.apply_modal_title')"></h3>
+                <button @click="showApplyModal = false"
+                        class="p-1 text-stone-400 dark:text-stone-500 hover:text-stone-600 dark:hover:text-stone-300 rounded-lg hover:bg-stone-100 dark:hover:bg-stone-700">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                    </svg>
+                </button>
+            </div>
+
+            <!-- Target picker -->
+            <div class="space-y-3 mb-4">
+                <label class="flex items-center gap-2 p-3 rounded-lg border-2 cursor-pointer transition-colors"
+                       :class="applyTarget === 'existing' ? 'border-pink-300 bg-pink-50/50 dark:bg-pink-900/20 dark:border-pink-700' : 'border-stone-200 dark:border-stone-700'">
+                    <input type="radio" value="existing" x-model="applyTarget" class="text-pink-400 focus:ring-pink-400" :disabled="availableLists.length === 0">
+                    <span class="text-sm font-medium text-stone-700 dark:text-stone-200" x-text="t('recipes.apply_to_existing')"></span>
+                </label>
+                <select x-show="applyTarget === 'existing' && availableLists.length > 0" x-cloak
+                        x-model.number="applyListId"
+                        class="w-full border border-stone-200 dark:border-stone-600 dark:bg-stone-700 dark:text-stone-100 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-pink-400">
+                    <template x-for="l in availableLists" :key="l.id">
+                        <option :value="l.id" x-text="(l.icon || '') + ' ' + l.name"></option>
+                    </template>
+                </select>
+                <p x-show="applyTarget === 'existing' && availableLists.length === 0" x-cloak
+                   class="text-xs text-stone-500 dark:text-stone-400 px-3"
+                   x-text="t('recipes.apply_no_lists')"></p>
+
+                <label class="flex items-center gap-2 p-3 rounded-lg border-2 cursor-pointer transition-colors"
+                       :class="applyTarget === 'new' ? 'border-pink-300 bg-pink-50/50 dark:bg-pink-900/20 dark:border-pink-700' : 'border-stone-200 dark:border-stone-700'">
+                    <input type="radio" value="new" x-model="applyTarget" class="text-pink-400 focus:ring-pink-400">
+                    <span class="text-sm font-medium text-stone-700 dark:text-stone-200" x-text="t('recipes.apply_to_new')"></span>
+                </label>
+                <input x-show="applyTarget === 'new'" x-cloak
+                       type="text" x-model="applyListName"
+                       :placeholder="t('recipes.apply_select_list')"
+                       maxlength="100"
+                       class="w-full border border-stone-200 dark:border-stone-600 dark:bg-stone-700 dark:text-stone-100 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-pink-400">
+            </div>
+
+            <!-- Ingredient checkboxes -->
+            <div class="border border-stone-200 dark:border-stone-700 rounded-lg overflow-hidden mb-4 max-h-72 overflow-y-auto">
+                <template x-for="ing in recipe.ingredients" :key="ing.id">
+                    <label class="flex items-center gap-3 px-3 py-2.5 border-b border-stone-100 dark:border-stone-700 last:border-b-0 cursor-pointer hover:bg-stone-50 dark:hover:bg-stone-700/50">
+                        <input type="checkbox"
+                               :checked="applySelections[ing.id]"
+                               @change="applySelections[ing.id] = $event.target.checked"
+                               class="rounded border-stone-300 text-pink-400 focus:ring-pink-400">
+                        <span class="flex-1 text-sm text-stone-700 dark:text-stone-200" x-text="formatIngredient(ing)"></span>
+                    </label>
+                </template>
+                <p x-show="!recipe.ingredients || recipe.ingredients.length === 0" x-cloak
+                   class="px-3 py-4 text-center text-sm text-stone-400 dark:text-stone-500"
+                   x-text="t('recipes.no_ingredients')"></p>
+            </div>
+
+            <!-- Submit / Cancel -->
+            <div class="flex gap-3">
+                <button type="button" @click="showApplyModal = false"
+                        class="flex-1 border border-stone-200 dark:border-stone-600 text-stone-600 dark:text-stone-300 py-3 rounded-lg text-sm font-medium hover:bg-stone-50 dark:hover:bg-stone-700"
+                        x-text="t('common.cancel')"></button>
+                <button type="button"
+                        @click="submitApply()"
+                        :disabled="applySelectedCount() === 0 || (applyTarget === 'existing' && !applyListId) || (applyTarget === 'new' && !applyListName.trim())"
+                        :class="applySelectedCount() === 0 || (applyTarget === 'existing' && !applyListId) || (applyTarget === 'new' && !applyListName.trim()) ? 'opacity-50 cursor-not-allowed' : ''"
+                        class="flex-1 bg-pink-400 hover:bg-pink-500 text-white py-3 rounded-lg text-sm font-medium transition-colors"
+                        x-text="t('recipes.apply_button_text', { count: applySelectedCount() })"></button>
+            </div>
+        </div>
+    </div>
+</div>
+{{end}}

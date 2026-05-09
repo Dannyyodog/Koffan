@@ -3,11 +3,20 @@ package handlers
 import (
 	"database/sql"
 	"shopping-list/db"
+	"shopping-list/i18n"
 	"strconv"
 	"strings"
 
 	"github.com/gofiber/fiber/v2"
 )
+
+// recipeListItem is a lightweight recipe payload used by GetRecipes that adds
+// IngredientCount to the wire shape. We embed db.Recipe so existing JSON keys
+// stay identical and clients get the new key for free.
+type recipeListItem struct {
+	db.Recipe
+	IngredientCount int `json:"ingredient_count"`
+}
 
 // Input length limits for recipes (mirrors handlers/lists.go:16-22 style).
 const (
@@ -58,40 +67,84 @@ func formatUnitForDescription(unit string) string {
 	}
 }
 
-// GetRecipesPage renders the recipes list page. Stub for now — the real template
-// arrives in Phase 7. Returning a minimal HTML string so the route is curlable.
+// GetRecipesPage was a stub in Phase 6. Recipes now live as a section on the
+// home page, so /recipes simply redirects there. Keeps any old bookmarks alive.
 func GetRecipesPage(c *fiber.Ctx) error {
-	c.Set("Content-Type", "text/html; charset=utf-8")
-	return c.SendString(`<!doctype html><meta charset="utf-8"><title>Recipes</title><body style="font-family:sans-serif;padding:2rem;color:#444"><h1>Recipes</h1><p>UI coming in Phase 7. Use <code>/recipes/list</code> (or <code>/api/v1/recipes</code> with <code>Authorization: Bearer &lt;token&gt;</code>) for the JSON API.</p></body>`)
+	return c.Redirect("/")
 }
 
-// GetRecipes returns all recipes as JSON (no ingredients/steps).
+// GetRecipes returns all recipes as JSON, decorated with ingredient_count so
+// the home-page recipe cards can show "N ingredients" without a per-recipe
+// follow-up fetch. Per-recipe ingredient lookup is N+1 against db.GetRecipeIngredients
+// — acceptable here because recipe counts stay small (single-digit users).
 func GetRecipes(c *fiber.Ctx) error {
 	recipes, err := db.GetRecipes()
 	if err != nil {
 		return sendError(c, 500, "error.fetch_failed")
 	}
 	if recipes == nil {
-		recipes = []db.Recipe{}
+		return c.JSON([]recipeListItem{})
 	}
-	return c.JSON(recipes)
+
+	out := make([]recipeListItem, 0, len(recipes))
+	for _, r := range recipes {
+		count := 0
+		if ings, ierr := db.GetRecipeIngredients(r.ID); ierr == nil {
+			count = len(ings)
+		}
+		out = append(out, recipeListItem{Recipe: r, IngredientCount: count})
+	}
+	return c.JSON(out)
 }
 
-// GetRecipe returns one recipe with ingredients + steps as JSON.
+// GetRecipe returns one recipe. Default response is HTML (the detail page).
+// JSON is returned when the request asks for it via Accept header or ?format=json.
+// Mirrors the dual-purpose pattern used by GetLists at handlers/lists.go.
 func GetRecipe(c *fiber.Ctx) error {
 	id, err := strconv.ParseInt(c.Params("id"), 10, 64)
 	if err != nil {
-		return sendError(c, 400, "error.invalid_id")
+		if wantsJSON(c) {
+			return sendError(c, 400, "error.invalid_id")
+		}
+		return c.Redirect("/")
 	}
 
 	recipe, err := db.GetRecipe(id)
 	if err != nil {
 		if err == sql.ErrNoRows {
-			return sendError(c, 404, "error.recipe_not_found")
+			if wantsJSON(c) {
+				return sendError(c, 404, "error.recipe_not_found")
+			}
+			return c.Redirect("/")
 		}
 		return sendError(c, 500, "error.fetch_failed")
 	}
-	return c.JSON(recipe)
+
+	if wantsJSON(c) {
+		return c.JSON(recipe)
+	}
+
+	lists, _ := db.GetAllLists()
+
+	return c.Render("recipe", fiber.Map{
+		"Recipe":       recipe,
+		"Lists":        lists,
+		"Translations": i18n.GetAllLocales(),
+		"Locales":      i18n.AvailableLocales(),
+		"DefaultLang":  i18n.GetDefaultLang(),
+	})
+}
+
+// wantsJSON returns true when the client asked for JSON via Accept: application/json
+// or ?format=json query param. Mirrors the pattern in handlers/lists.go GetLists.
+func wantsJSON(c *fiber.Ctx) bool {
+	if c.Query("format") == "json" {
+		return true
+	}
+	if accept := c.Get("Accept"); accept != "" && strings.Contains(strings.ToLower(accept), "application/json") {
+		return true
+	}
+	return false
 }
 
 // CreateRecipe creates a new recipe.
