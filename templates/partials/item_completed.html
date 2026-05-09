@@ -3,9 +3,53 @@
     id="item-{{.Item.ID}}"
     data-item-id="{{.Item.ID}}"
     data-section-id="{{.Item.SectionID}}"
+    data-item-name="{{.Item.Name}}"
     class="px-4 py-2.5 flex items-center gap-3 hover:bg-stone-100/50 dark:hover:bg-stone-700/50 transition-colors group"
     x-show="isItemVisible({{.Item.ID}})"
 >
+    <!-- Image Thumbnail / Upload Slot (dimmed when completed) -->
+    <div
+        class="image-slot relative w-10 h-10 flex-shrink-0 rounded overflow-hidden cursor-pointer opacity-60"
+        data-item-name="{{.Item.Name}}"
+        @click.stop="openImageAction({{.Item.ID}}, '{{.Item.Name | js}}', '{{.Item.ImagePath | js}}')"
+        @contextmenu.prevent="confirmRemoveImage({{.Item.ID}}, '{{.Item.Name | js}}', '{{.Item.ImagePath | js}}')"
+        @touchstart.passive="startLongPress({{.Item.ID}}, '{{.Item.Name | js}}', '{{.Item.ImagePath | js}}')"
+        @touchend="cancelLongPress()"
+        @touchmove="cancelLongPress()"
+        @touchcancel="cancelLongPress()"
+        :aria-label="'{{.Item.ImagePath | js}}' ? '{{.Item.Name | js}}' : t('actions.add_image')"
+    >
+        {{if .Item.ImagePath}}
+        <img src="/uploads/{{.Item.ImagePath}}"
+             alt="{{.Item.Name}}"
+             class="w-full h-full object-cover"
+             loading="lazy">
+        {{else}}
+        <div class="w-full h-full bg-stone-100 dark:bg-stone-700 flex items-center justify-center text-stone-300 dark:text-stone-500">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z"></path>
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z"></path>
+            </svg>
+        </div>
+        {{end}}
+        <div class="absolute inset-0 bg-black/55 flex items-center justify-center"
+             x-show="uploadingImageFor === {{.Item.ID}}"
+             x-cloak
+             :aria-label="t('image.uploading')"
+             role="status">
+            <svg class="w-4 h-4 text-white animate-spin" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"></path>
+            </svg>
+        </div>
+        <input type="file"
+               accept="image/*"
+               class="hidden"
+               id="image-input-{{.Item.ID}}"
+               @change="uploadImage({{.Item.ID}}, $event.target.files[0])"
+               @click.stop>
+    </div>
+
     <!-- Checkbox (checked) -->
     <button
         @click="toggleItem({{.Item.ID}}, {{.Item.SectionID}})"

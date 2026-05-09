@@ -72,7 +72,13 @@
     "uncertain": "Uncertain",
     "certain": "Certain",
     "remove_mark": "Remove mark",
-    "mark_uncertain": "Mark as uncertain"
+    "mark_uncertain": "Mark as uncertain",
+    "add_image": "Add image",
+    "remove_image": "Remove image"
+  },
+  "image": {
+    "uploading": "Uploading...",
+    "placeholder_alt": "No image yet"
   },
   "settings": {
     "title": "Settings",
@@ -111,7 +117,8 @@
     "delete_sections": "Delete {{count}} selected sections?",
     "delete_section": "Delete section '{{name}}'?",
     "delete_completed_items": "Delete all bought items?",
-    "delete_template": "Delete template \"{{name}}\"?"
+    "delete_template": "Delete template \"{{name}}\"?",
+    "remove_image": "Remove image for \"{{name}}\"?"
   },
   "stats": {
     "progress": "Progress"

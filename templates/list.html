@@ -1094,6 +1094,46 @@
     <!-- Toast Container -->
     <div id="toast-container" class="fixed bottom-20 md:bottom-6 left-1/2 -translate-x-1/2 z-50 flex flex-col items-center gap-2 pointer-events-none"></div>
 
+    <!-- Image Lightbox (shared across all items) -->
+    <div x-show="lightboxItemId !== null"
+         x-cloak
+         x-transition:enter="transition ease-out duration-150"
+         x-transition:enter-start="opacity-0"
+         x-transition:enter-end="opacity-100"
+         x-transition:leave="transition ease-in duration-100"
+         x-transition:leave-start="opacity-100"
+         x-transition:leave-end="opacity-0"
+         @click.self="closeLightbox()"
+         @keydown.escape.window="closeLightbox()"
+         class="fixed inset-0 z-[60] bg-black/90 flex flex-col items-center justify-center p-4 safe-area-pb"
+         style="padding-top: max(1rem, env(safe-area-inset-top)); padding-bottom: max(1rem, env(safe-area-inset-bottom));">
+        <!-- Close button -->
+        <button @click="closeLightbox()"
+                class="absolute top-3 right-3 w-11 h-11 flex items-center justify-center text-white/80 hover:text-white rounded-full hover:bg-white/10 transition-colors"
+                :aria-label="t('common.close')"
+                style="top: max(0.75rem, env(safe-area-inset-top));">
+            <svg class="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+            </svg>
+        </button>
+
+        <!-- Image -->
+        <img :src="lightboxImageUrl"
+             :alt="lightboxItemName"
+             class="max-w-full max-h-[75vh] object-contain rounded shadow-lg"
+             @click.stop>
+
+        <!-- Caption + remove button -->
+        <div class="mt-4 text-white text-sm font-medium truncate max-w-full" x-text="lightboxItemName"></div>
+        <button @click="confirmRemoveImage(lightboxItemId, lightboxItemName)"
+                class="mt-4 px-4 py-2.5 bg-red-600 hover:bg-red-700 text-white rounded-lg text-sm font-medium flex items-center gap-2 transition-colors">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
+            </svg>
+            <span x-text="t('actions.remove_image')"></span>
+        </button>
+    </div>
+
 </div>
 
 <script>
