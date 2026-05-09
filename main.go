@@ -49,6 +49,15 @@ func main() {
 	// Initialize login rate limiter
 	handlers.InitLoginRateLimiter()
 
+	// Initialize uploads directory (for per-item image uploads)
+	uploadsPath := os.Getenv("UPLOADS_PATH")
+	if uploadsPath == "" {
+		uploadsPath = "./uploads"
+	}
+	if err := handlers.InitUploads(uploadsPath); err != nil {
+		log.Fatal("Failed to initialize uploads directory:", err)
+	}
+
 	// Initialize template engine
 	templatesRootFS, err := fs.Sub(embeddedTemplatesFS, "templates")
 	if err != nil {
@@ -115,10 +124,15 @@ func main() {
 		},
 	})
 
-	// Initialize Fiber app
+	// Initialize Fiber app.
+	// BodyLimit is bumped above the per-upload image cap (handlers.MaxImageSize,
+	// 10 MB) so the upload handler is the gatekeeper for image-too-large and can
+	// return a translated error message. Fiber's default is 4 MiB, which would
+	// otherwise reject a 5+ MB image with a generic 413 before our handler runs.
 	app := fiber.New(fiber.Config{
 		Views:       engine,
 		ViewsLayout: "layout",
+		BodyLimit:   12 * 1024 * 1024,
 	})
 
 	// Middleware
@@ -175,6 +189,17 @@ func main() {
 
 	// Auth middleware for all other routes
 	app.Use(handlers.AuthMiddleware)
+
+	// User-uploaded item images, served from disk under UPLOADS_PATH.
+	// Mounted AFTER AuthMiddleware so private to logged-in users.
+	app.Use("/uploads", func(c *fiber.Ctx) error {
+		c.Set("X-Content-Type-Options", "nosniff")
+		return c.Next()
+	}, filesystem.New(filesystem.Config{
+		Root:   http.Dir(uploadsPath),
+		Browse: false,
+		MaxAge: 86400 * 30,
+	}))
 
 	// WebSocket upgrade middleware
 	app.Use("/ws", func(c *fiber.Ctx) error {
@@ -241,6 +266,8 @@ func main() {
 	app.Post("/items/:id/move", handlers.MoveItemToSection)
 	app.Post("/items/:id/move-up", handlers.MoveItemUp)
 	app.Post("/items/:id/move-down", handlers.MoveItemDown)
+	app.Post("/items/:id/image", handlers.UploadItemImage)
+	app.Delete("/items/:id/image", handlers.DeleteItemImage)
 
 	// Stats API
 	app.Get("/stats", handlers.GetStats)

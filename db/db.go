@@ -177,6 +177,9 @@ func runMigrations() {
 
 	// Migration: Add show_completed to lists
 	migrateListShowCompleted()
+
+	// Migration: Add image_path to item_history
+	migrateItemHistoryImage()
 }
 
 func migrateToMultipleLists() {
@@ -374,6 +377,29 @@ func migrateListShowCompleted() {
 	}
 
 	log.Println("Migration completed: List show_completed added")
+}
+
+func migrateItemHistoryImage() {
+	var count int
+	err := DB.QueryRow("SELECT COUNT(*) FROM pragma_table_info('item_history') WHERE name='image_path'").Scan(&count)
+	if err != nil {
+		log.Println("Migration check failed:", err)
+		return
+	}
+
+	if count > 0 {
+		return // Already migrated
+	}
+
+	log.Println("Running migration: Adding image_path to item_history...")
+
+	_, err = DB.Exec("ALTER TABLE item_history ADD COLUMN image_path TEXT DEFAULT NULL")
+	if err != nil {
+		log.Println("Migration failed - adding image_path to item_history:", err)
+		return
+	}
+
+	log.Println("Migration completed: item_history.image_path added")
 }
 
 func Close() {

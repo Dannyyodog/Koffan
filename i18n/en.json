@@ -151,7 +151,13 @@
     "apply_failed": "Failed to apply",
     "session_failed": "Session creation failed",
     "database_unavailable": "Database temporarily unavailable, please retry",
-    "database_error": "Database error"
+    "database_error": "Database error",
+    "invalid_item_id": "Invalid item ID",
+    "image_required": "Please choose an image to upload",
+    "image_too_large": "Image is too large (max 10 MB)",
+    "image_invalid_format": "Unsupported image format (use JPG, PNG, WebP, GIF, or HEIC)",
+    "image_decode_failed": "Could not process this image, please try a different one",
+    "image_save_failed": "Could not save image, please try again"
   },
   "offline": {
     "title": "Offline mode",
