@@ -2,8 +2,11 @@ package handlers
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"log"
+	"os"
+	"path/filepath"
 	"shopping-list/db"
 	"shopping-list/i18n"
 	"strconv"
@@ -321,4 +324,104 @@ func sectionRenderMap(section *db.Section) fiber.Map {
 		"Sections":      getSectionsForDropdown(),
 		"ShowCompleted": db.GetShowCompletedForSection(section.ID),
 	}
+}
+
+// UploadListCoverImage attaches a cover image to a shopping list.
+// Mirrors handlers.UploadRecipeCoverImage exactly, swapping recipe-id for list-id.
+func UploadListCoverImage(c *fiber.Ctx) error {
+	id, err := strconv.ParseInt(c.Params("id"), 10, 64)
+	if err != nil {
+		return sendError(c, 400, "error.invalid_id")
+	}
+
+	if _, err := db.GetListByID(id); err != nil {
+		if err == sql.ErrNoRows {
+			return sendError(c, 404, "error.not_found")
+		}
+		log.Printf("[UPLOAD] fetch list %d failed: %v", id, err)
+		return sendError(c, 500, "error.fetch_failed")
+	}
+
+	file, err := c.FormFile("image")
+	if err != nil || file == nil {
+		return sendError(c, 400, "error.image_required")
+	}
+
+	filename, err := saveUploadedImage(file)
+	if err != nil {
+		switch {
+		case errors.Is(err, errImageTooLarge):
+			return sendError(c, 413, "error.image_too_large")
+		case errors.Is(err, errImageInvalidFormat):
+			return sendError(c, 415, "error.image_invalid_format")
+		case errors.Is(err, errImageDecodeFailed):
+			return sendError(c, 422, "error.image_decode_failed")
+		default:
+			log.Printf("[UPLOAD] list cover save failed: %v", err)
+			return sendError(c, 500, "error.image_save_failed")
+		}
+	}
+
+	// Capture the previous path BEFORE overwriting so we can clean it up.
+	oldPath, _ := db.GetListCoverImage(id)
+
+	if err := db.SetListCoverImage(id, &filename); err != nil {
+		log.Printf("[UPLOAD] set list cover for %d failed: %v", id, err)
+		return sendError(c, 500, "error.image_save_failed")
+	}
+
+	if oldPath != "" && oldPath != filename && UploadsRoot() != "" {
+		fullPath := filepath.Join(UploadsRoot(), oldPath)
+		if rmErr := os.Remove(fullPath); rmErr != nil && !os.IsNotExist(rmErr) {
+			log.Printf("[UPLOAD] remove old list cover %q failed: %v", fullPath, rmErr)
+		}
+	}
+
+	url := "/uploads/" + filename
+	BroadcastUpdate("list_cover_updated", map[string]interface{}{
+		"list_id":         id,
+		"cover_image_url": url,
+	})
+
+	return c.JSON(fiber.Map{
+		"list_id":         id,
+		"cover_image_url": url,
+	})
+}
+
+// DeleteListCoverImage clears a list's cover image and removes the file from disk.
+func DeleteListCoverImage(c *fiber.Ctx) error {
+	id, err := strconv.ParseInt(c.Params("id"), 10, 64)
+	if err != nil {
+		return sendError(c, 400, "error.invalid_id")
+	}
+
+	if _, err := db.GetListByID(id); err != nil {
+		if err == sql.ErrNoRows {
+			return sendError(c, 404, "error.not_found")
+		}
+		log.Printf("[UPLOAD] fetch list %d failed: %v", id, err)
+		return sendError(c, 500, "error.fetch_failed")
+	}
+
+	oldPath, _ := db.GetListCoverImage(id)
+
+	if err := db.SetListCoverImage(id, nil); err != nil {
+		log.Printf("[UPLOAD] clear list cover for %d failed: %v", id, err)
+		return sendError(c, 500, "error.image_save_failed")
+	}
+
+	if oldPath != "" && UploadsRoot() != "" {
+		fullPath := filepath.Join(UploadsRoot(), oldPath)
+		if rmErr := os.Remove(fullPath); rmErr != nil && !os.IsNotExist(rmErr) {
+			log.Printf("[UPLOAD] remove list cover %q failed: %v", fullPath, rmErr)
+		}
+	}
+
+	BroadcastUpdate("list_cover_updated", map[string]interface{}{
+		"list_id":         id,
+		"cover_image_url": "",
+	})
+
+	return c.SendStatus(204)
 }

@@ -122,6 +122,15 @@ func main() {
 		"asset": func(path string) string {
 			return "/static/" + path + "?v=" + handlers.AssetHash
 		},
+		// pstr dereferences a *string for inline rendering. Returns "" on nil.
+		// Used by templates that surface nullable columns (e.g. List.CoverImagePath)
+		// as a string attribute value. html/template doesn't auto-deref pointers.
+		"pstr": func(s *string) string {
+			if s == nil {
+				return ""
+			}
+			return *s
+		},
 	})
 
 	// Initialize Fiber app.
@@ -241,6 +250,8 @@ func main() {
 	app.Post("/lists/:id/move-up", handlers.MoveListUp)
 	app.Post("/lists/:id/move-down", handlers.MoveListDown)
 	app.Post("/lists/:id/toggle-completed", handlers.ToggleShowCompleted)
+	app.Post("/lists/:id/cover-image", handlers.UploadListCoverImage)
+	app.Delete("/lists/:id/cover-image", handlers.DeleteListCoverImage)
 
 	// Templates API
 	app.Get("/templates", handlers.GetTemplates)
@@ -274,6 +285,13 @@ func main() {
 	app.Post("/recipes/:id/apply", handlers.ApplyRecipe)
 	app.Post("/recipes/:id/cover-image", handlers.UploadRecipeCoverImage)
 	app.Delete("/recipes/:id/cover-image", handlers.DeleteRecipeCoverImage)
+	app.Post("/recipes/:id/steps/:stepId/toggle", handlers.ToggleRecipeStepCompleted)
+	app.Post("/recipes/:id/steps/reset-completed", handlers.ResetRecipeStepsCompleted)
+
+	// Images by name (used for ingredient image upload — same item_history pool
+	// as item images, just keyed via name path param instead of item id).
+	app.Post("/image-by-name/:name", handlers.UploadImageByName)
+	app.Delete("/image-by-name/:name", handlers.DeleteImageByName)
 
 	// Items API
 	app.Get("/items/:id/html", handlers.GetItemHTML)

@@ -134,6 +134,57 @@
         </div>
     </header>
 
+    <!-- List cover image banner (full-width, below the sticky header). Mirrors
+         the recipe-detail banner. State `coverImagePath` + `uploadingListCover`
+         + `listCoverLightboxOpen` live on the shoppingList() Alpine component;
+         the initial value is seeded from data-cover-image-path on init. -->
+    <div class="list-cover-banner relative w-full aspect-video bg-stone-100 dark:bg-stone-800 mb-6 overflow-hidden"
+         data-list-id="{{.List.ID}}"
+         data-cover-image-path="{{pstr .List.CoverImagePath}}">
+        <template x-if="coverImagePath">
+            <img :src="'/uploads/' + coverImagePath"
+                 :alt="$el.closest('[data-list-id]')?.dataset?.listId || ''"
+                 class="w-full h-full object-cover cursor-zoom-in"
+                 @click="openListCoverLightbox()"
+                 loading="lazy">
+        </template>
+        <template x-if="!coverImagePath">
+            <button type="button"
+                    @click="triggerListCoverUpload()"
+                    class="w-full h-full flex flex-col items-center justify-center text-stone-400 dark:text-stone-500 hover:text-pink-500 dark:hover:text-pink-400 transition-colors cursor-pointer"
+                    :aria-label="t('lists.add_cover')">
+                <svg class="w-10 h-10" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z"></path>
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z"></path>
+                </svg>
+                <span class="mt-2 text-sm font-medium" x-text="t('lists.add_cover')"></span>
+            </button>
+        </template>
+        <button x-show="coverImagePath" x-cloak
+                @click.stop="triggerListCoverUpload()"
+                class="absolute top-2 right-2 bg-black/55 hover:bg-black/75 text-white rounded-full p-2.5 transition-colors"
+                :aria-label="t('lists.add_cover')">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z"></path>
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z"></path>
+            </svg>
+        </button>
+        <div x-show="uploadingListCover" x-cloak
+             class="absolute inset-0 bg-black/55 flex items-center justify-center"
+             :aria-label="t('lists.cover_uploading')"
+             role="status">
+            <svg class="w-8 h-8 text-white animate-spin" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"></path>
+            </svg>
+        </div>
+        <input type="file"
+               id="list-cover-image-input"
+               accept="image/*"
+               class="hidden"
+               @change="uploadListCover($event.target.files[0])">
+    </div>
+
     <!-- Search Bar -->
     <div class="container mx-auto max-w-4xl px-4 mb-4" x-show="stats.total > 5" x-cloak>
         <div class="relative">
@@ -1131,6 +1182,39 @@
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
             </svg>
             <span x-text="t('actions.remove_image')"></span>
+        </button>
+    </div>
+
+    <!-- List Cover Image Lightbox -->
+    <div x-show="listCoverLightboxOpen" x-cloak
+         x-transition:enter="transition ease-out duration-150"
+         x-transition:enter-start="opacity-0"
+         x-transition:enter-end="opacity-100"
+         x-transition:leave="transition ease-in duration-100"
+         x-transition:leave-start="opacity-100"
+         x-transition:leave-end="opacity-0"
+         @click.self="closeListCoverLightbox()"
+         @keydown.escape.window="closeListCoverLightbox()"
+         class="fixed inset-0 z-[60] bg-black/90 flex flex-col items-center justify-center p-4"
+         style="padding-top: max(1rem, env(safe-area-inset-top)); padding-bottom: max(1rem, env(safe-area-inset-bottom));">
+        <button @click="closeListCoverLightbox()"
+                class="absolute top-3 right-3 w-11 h-11 flex items-center justify-center text-white/80 hover:text-white rounded-full hover:bg-white/10 transition-colors"
+                :aria-label="t('common.close')"
+                style="top: max(0.75rem, env(safe-area-inset-top));">
+            <svg class="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+            </svg>
+        </button>
+        <img :src="coverImagePath ? '/uploads/' + coverImagePath : ''"
+             alt=""
+             class="max-w-full max-h-[75vh] object-contain rounded shadow-lg"
+             @click.stop>
+        <button @click="confirmRemoveListCover()"
+                class="mt-4 px-4 py-2.5 bg-red-600 hover:bg-red-700 text-white rounded-lg text-sm font-medium flex items-center gap-2 transition-colors">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
+            </svg>
+            <span x-text="t('lists.remove_cover')"></span>
         </button>
     </div>
 

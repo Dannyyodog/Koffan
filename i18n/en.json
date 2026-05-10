@@ -51,7 +51,13 @@
     "add_cover": "Add cover image",
     "remove_cover": "Remove cover image",
     "confirm_remove_cover": "Remove the cover image for this recipe?",
-    "cover_uploading": "Uploading cover..."
+    "cover_uploading": "Uploading cover...",
+    "notes_placeholder": "Notes (e.g. 15 oz cans, chopped)",
+    "reset_steps": "Reset all steps",
+    "confirm_reset_steps": "Reset completion on all steps?",
+    "add_ingredient_image": "Add ingredient image",
+    "remove_ingredient_image": "Remove ingredient image",
+    "confirm_remove_ingredient_image": "Remove image for this ingredient?"
   },
   "units": {
     "tsp": "tsp",
@@ -65,7 +71,19 @@
     "ml": "ml",
     "l": "l",
     "whole": "whole",
-    "to_taste": "to taste"
+    "can": "can",
+    "jar": "jar",
+    "bottle": "bottle",
+    "package": "package",
+    "bunch": "bunch",
+    "head": "head",
+    "dozen": "dozen",
+    "slice": "slice",
+    "loaf": "loaf",
+    "clove": "clove",
+    "to_taste": "to taste",
+    "cooking_group": "Cooking",
+    "packaging_group": "Packaging"
   },
   "nav": {
     "settings": "Settings",
@@ -266,7 +284,11 @@
     "switch": "Switch to",
     "active": "Active",
     "icon": "Icon",
-    "delete_confirm": "Delete list \"{{name}}\"? All items will be lost."
+    "delete_confirm": "Delete list \"{{name}}\"? All items will be lost.",
+    "add_cover": "Add cover image",
+    "remove_cover": "Remove cover image",
+    "confirm_remove_cover": "Remove the cover image for this list?",
+    "cover_uploading": "Uploading cover..."
   },
   "templates": {
     "title": "Templates",

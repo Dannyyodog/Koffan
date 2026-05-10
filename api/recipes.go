@@ -15,11 +15,13 @@ type CreateRecipeRequest struct {
 }
 
 // CreateIngredientRequest is the JSON body for POST/PUT /api/v1/recipes/:id/ingredients.
-// Quantity is *int so callers can omit it for "to taste".
+// Quantity is *float64 so callers can omit it for "to taste"; recipes accept
+// decimals (0.5 cup, 1.25 lb, etc.). Notes is optional freeform text.
 type CreateIngredientRequest struct {
-	Name     string `json:"name"`
-	Quantity *int   `json:"quantity,omitempty"`
-	Unit     string `json:"unit"`
+	Name     string   `json:"name"`
+	Quantity *float64 `json:"quantity,omitempty"`
+	Unit     string   `json:"unit"`
+	Notes    string   `json:"notes,omitempty"`
 }
 
 // CreateStepRequest is the JSON body for POST/PUT /api/v1/recipes/:id/steps.
@@ -146,9 +148,9 @@ func DeleteRecipe(c *fiber.Ctx) error {
 	return c.SendStatus(fiber.StatusNoContent)
 }
 
-// validateIngredientReq applies the same unit/quantity rules used by the HTMX handler.
+// validateIngredientReq applies the same unit/quantity/notes rules used by the HTMX handler.
 // Returns (cleanedQuantityPointer, errResponseOrNil).
-func validateIngredientReq(c *fiber.Ctx, req *CreateIngredientRequest) (*int, error) {
+func validateIngredientReq(c *fiber.Ctx, req *CreateIngredientRequest) (*float64, error) {
 	if req.Name == "" {
 		return nil, errResp(c, fiber.StatusBadRequest, "validation_error", "Ingredient name is required")
 	}
@@ -157,6 +159,9 @@ func validateIngredientReq(c *fiber.Ctx, req *CreateIngredientRequest) (*int, er
 	}
 	if !handlers.IsValidUnit(req.Unit) {
 		return nil, errResp(c, fiber.StatusBadRequest, "validation_error", "Invalid unit")
+	}
+	if len(req.Notes) > handlers.MaxIngredientNotesLength {
+		return nil, errResp(c, fiber.StatusBadRequest, "validation_error", "Ingredient notes too long")
 	}
 	if req.Unit == "to_taste" {
 		// Lenient: ignore any quantity, store NULL.
@@ -191,7 +196,7 @@ func AddRecipeIngredient(c *fiber.Ctx) error {
 	if errResponse != nil {
 		return errResponse
 	}
-	ing, err := db.AddRecipeIngredient(int64(recipeID), req.Name, qty, req.Unit)
+	ing, err := db.AddRecipeIngredient(int64(recipeID), req.Name, qty, req.Unit, req.Notes)
 	if err != nil {
 		return errResp(c, fiber.StatusInternalServerError, "create_failed", "Failed to create ingredient")
 	}
@@ -222,7 +227,7 @@ func UpdateRecipeIngredient(c *fiber.Ctx) error {
 	if errResponse != nil {
 		return errResponse
 	}
-	if err := db.UpdateRecipeIngredient(int64(ingredientID), req.Name, qty, req.Unit); err != nil {
+	if err := db.UpdateRecipeIngredient(int64(ingredientID), req.Name, qty, req.Unit, req.Notes); err != nil {
 		return errResp(c, fiber.StatusInternalServerError, "update_failed", "Failed to update ingredient")
 	}
 	updated, _ := db.GetRecipeIngredient(int64(ingredientID))
@@ -394,4 +399,16 @@ func UploadRecipeCoverImage(c *fiber.Ctx) error {
 
 func DeleteRecipeCoverImage(c *fiber.Ctx) error {
 	return handlers.DeleteRecipeCoverImage(c)
+}
+
+// ToggleRecipeStepCompleted and ResetRecipeStepsCompleted are pass-throughs
+// to the handlers package — same shape (path param + JSON/204 response) for
+// HTMX and REST callers, no separate wrapper logic needed.
+
+func ToggleRecipeStepCompleted(c *fiber.Ctx) error {
+	return handlers.ToggleRecipeStepCompleted(c)
+}
+
+func ResetRecipeStepsCompleted(c *fiber.Ctx) error {
+	return handlers.ResetRecipeStepsCompleted(c)
 }

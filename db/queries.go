@@ -3,7 +3,9 @@ package db
 import (
 	"database/sql"
 	"fmt"
+	"math"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -43,15 +45,16 @@ type Session struct {
 
 // List represents a shopping list
 type List struct {
-	ID            int64     `json:"id"`
-	Name          string    `json:"name"`
-	Icon          string    `json:"icon"`
-	SortOrder     int       `json:"sort_order"`
-	IsActive      bool      `json:"is_active"`
-	ShowCompleted bool      `json:"show_completed"`
-	CreatedAt     time.Time `json:"created_at"`
-	UpdatedAt     int64     `json:"updated_at"`
-	Stats         Stats     `json:"stats,omitempty"`
+	ID             int64     `json:"id"`
+	Name           string    `json:"name"`
+	Icon           string    `json:"icon"`
+	SortOrder      int       `json:"sort_order"`
+	IsActive       bool      `json:"is_active"`
+	ShowCompleted  bool      `json:"show_completed"`
+	CoverImagePath *string   `json:"cover_image_path,omitempty"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      int64     `json:"updated_at"`
+	Stats          Stats     `json:"stats,omitempty"`
 }
 
 // Template represents a reusable template
@@ -81,7 +84,7 @@ type TemplateItem struct {
 // listSelectWithStats is a shared SELECT that joins lists with aggregated item stats in a single query.
 const listSelectWithStats = `
 	SELECT l.id, l.name, COALESCE(l.icon, '🛒'), l.sort_order, l.is_active,
-	       COALESCE(l.show_completed, TRUE), l.created_at, COALESCE(l.updated_at, 0),
+	       COALESCE(l.show_completed, TRUE), l.cover_image_path, l.created_at, COALESCE(l.updated_at, 0),
 	       COALESCE(COUNT(i.id), 0) AS total_items,
 	       COALESCE(SUM(CASE WHEN i.completed = TRUE THEN 1 ELSE 0 END), 0) AS completed_items
 	FROM lists l
@@ -95,8 +98,13 @@ func scanListWithStats(scanner interface {
 }) (List, error) {
 	var l List
 	var total, completed int
-	if err := scanner.Scan(&l.ID, &l.Name, &l.Icon, &l.SortOrder, &l.IsActive, &l.ShowCompleted, &l.CreatedAt, &l.UpdatedAt, &total, &completed); err != nil {
+	var cover sql.NullString
+	if err := scanner.Scan(&l.ID, &l.Name, &l.Icon, &l.SortOrder, &l.IsActive, &l.ShowCompleted, &cover, &l.CreatedAt, &l.UpdatedAt, &total, &completed); err != nil {
 		return l, err
+	}
+	if cover.Valid {
+		s := cover.String
+		l.CoverImagePath = &s
 	}
 	l.Stats.TotalItems = total
 	l.Stats.CompletedItems = completed
@@ -1933,23 +1941,31 @@ type Recipe struct {
 }
 
 // RecipeIngredient represents one ingredient row inside a recipe.
-// Quantity is *int because "to taste" stores NULL.
+// Quantity is *float64 because "to taste" stores NULL and recipes can use
+// fractional amounts (0.5 cup, 1.25 lb, etc.).
+// Notes is freeform text shown after a middle-dot in the row (e.g. "15 oz cans").
+// ImagePath is populated by joining item_history.image_path on name (case-insensitive),
+// so ingredient images and shopping-list-item images stay in sync via the same row.
 type RecipeIngredient struct {
 	ID        int64     `json:"id"`
 	RecipeID  int64     `json:"recipe_id"`
 	Name      string    `json:"name"`
-	Quantity  *int      `json:"quantity"`
+	Quantity  *float64  `json:"quantity"`
 	Unit      string    `json:"unit"`
+	Notes     string    `json:"notes"`
+	ImagePath string    `json:"image_path"`
 	SortOrder int       `json:"sort_order"`
 	CreatedAt time.Time `json:"created_at"`
 }
 
 // RecipeStep represents one numbered instruction step inside a recipe.
+// Completed is a per-step checkbox; resets via the "Reset all steps" UI button.
 type RecipeStep struct {
 	ID         int64     `json:"id"`
 	RecipeID   int64     `json:"recipe_id"`
 	StepNumber int       `json:"step_number"`
 	Content    string    `json:"content"`
+	Completed  bool      `json:"completed"`
 	CreatedAt  time.Time `json:"created_at"`
 }
 
@@ -2014,12 +2030,17 @@ func GetRecipe(id int64) (*Recipe, error) {
 }
 
 // GetRecipeIngredients returns ingredients for a recipe ordered by sort_order.
+// LEFT JOIN item_history populates image_path so ingredient thumbnails come
+// from the shared image-by-name pool (item_history.image_path).
 func GetRecipeIngredients(recipeID int64) ([]RecipeIngredient, error) {
 	rows, err := DB.Query(`
-		SELECT id, recipe_id, name, quantity, unit, sort_order, created_at
-		FROM recipe_ingredients
-		WHERE recipe_id = ?
-		ORDER BY sort_order ASC
+		SELECT ri.id, ri.recipe_id, ri.name, ri.quantity, ri.unit,
+		       COALESCE(ri.notes, '') AS notes, ri.sort_order, ri.created_at,
+		       COALESCE(ih.image_path, '') AS image_path
+		FROM recipe_ingredients ri
+		LEFT JOIN item_history ih ON ri.name = ih.name COLLATE NOCASE
+		WHERE ri.recipe_id = ?
+		ORDER BY ri.sort_order ASC
 	`, recipeID)
 	if err != nil {
 		return nil, err
@@ -2029,12 +2050,12 @@ func GetRecipeIngredients(recipeID int64) ([]RecipeIngredient, error) {
 	var ingredients []RecipeIngredient
 	for rows.Next() {
 		var ri RecipeIngredient
-		var qty sql.NullInt64
-		if err := rows.Scan(&ri.ID, &ri.RecipeID, &ri.Name, &qty, &ri.Unit, &ri.SortOrder, &ri.CreatedAt); err != nil {
+		var qty sql.NullFloat64
+		if err := rows.Scan(&ri.ID, &ri.RecipeID, &ri.Name, &qty, &ri.Unit, &ri.Notes, &ri.SortOrder, &ri.CreatedAt, &ri.ImagePath); err != nil {
 			return nil, err
 		}
 		if qty.Valid {
-			q := int(qty.Int64)
+			q := qty.Float64
 			ri.Quantity = &q
 		}
 		ingredients = append(ingredients, ri)
@@ -2045,7 +2066,7 @@ func GetRecipeIngredients(recipeID int64) ([]RecipeIngredient, error) {
 // GetRecipeSteps returns steps for a recipe ordered by step_number.
 func GetRecipeSteps(recipeID int64) ([]RecipeStep, error) {
 	rows, err := DB.Query(`
-		SELECT id, recipe_id, step_number, content, created_at
+		SELECT id, recipe_id, step_number, content, COALESCE(completed, FALSE), created_at
 		FROM recipe_steps
 		WHERE recipe_id = ?
 		ORDER BY step_number ASC
@@ -2058,7 +2079,7 @@ func GetRecipeSteps(recipeID int64) ([]RecipeStep, error) {
 	var steps []RecipeStep
 	for rows.Next() {
 		var s RecipeStep
-		if err := rows.Scan(&s.ID, &s.RecipeID, &s.StepNumber, &s.Content, &s.CreatedAt); err != nil {
+		if err := rows.Scan(&s.ID, &s.RecipeID, &s.StepNumber, &s.Content, &s.Completed, &s.CreatedAt); err != nil {
 			return nil, err
 		}
 		steps = append(steps, s)
@@ -2095,6 +2116,58 @@ func UpdateRecipe(id int64, name, description string) error {
 func DeleteRecipe(id int64) error {
 	_, err := DB.Exec(`DELETE FROM recipes WHERE id = ?`, id)
 	return err
+}
+
+// ToggleRecipeStepCompleted flips the completed bool on a step and returns the new state.
+func ToggleRecipeStepCompleted(stepID int64) (bool, error) {
+	tx, err := DB.Begin()
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback()
+
+	var current bool
+	if err := tx.QueryRow(`SELECT COALESCE(completed, FALSE) FROM recipe_steps WHERE id = ?`, stepID).Scan(&current); err != nil {
+		return false, err
+	}
+	newState := !current
+	if _, err := tx.Exec(`UPDATE recipe_steps SET completed = ? WHERE id = ?`, newState, stepID); err != nil {
+		return false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return false, err
+	}
+	return newState, nil
+}
+
+// ResetRecipeStepsCompleted marks all steps for a recipe as not-completed.
+func ResetRecipeStepsCompleted(recipeID int64) error {
+	_, err := DB.Exec(`UPDATE recipe_steps SET completed = FALSE WHERE recipe_id = ?`, recipeID)
+	return err
+}
+
+// SetListCoverImage sets or clears (path == nil) the cover image path on a list.
+// Mirrors SetRecipeCoverImage.
+func SetListCoverImage(id int64, path *string) error {
+	if path == nil {
+		_, err := DB.Exec(`UPDATE lists SET cover_image_path = NULL, updated_at = strftime('%s', 'now') WHERE id = ?`, id)
+		return err
+	}
+	_, err := DB.Exec(`UPDATE lists SET cover_image_path = ?, updated_at = strftime('%s', 'now') WHERE id = ?`, *path, id)
+	return err
+}
+
+// GetListCoverImage returns the current cover_image_path filename (empty string if NULL).
+// Used by the list-cover delete handler to clean up the old file from disk.
+func GetListCoverImage(id int64) (string, error) {
+	var p sql.NullString
+	if err := DB.QueryRow(`SELECT cover_image_path FROM lists WHERE id = ?`, id).Scan(&p); err != nil {
+		return "", err
+	}
+	if !p.Valid {
+		return "", nil
+	}
+	return p.String, nil
 }
 
 // SetRecipeCoverImage sets or clears (path == nil) the cover image path.
@@ -2166,8 +2239,10 @@ func MoveRecipeDown(id int64) error {
 }
 
 // AddRecipeIngredient adds an ingredient to a recipe.
-// quantity is a pointer so callers can pass nil for "to taste".
-func AddRecipeIngredient(recipeID int64, name string, quantity *int, unit string) (*RecipeIngredient, error) {
+// quantity is *float64 so callers pass nil for "to taste"; for all other units
+// it's a positive REAL (decimals like 0.5 supported).
+// notes is freeform text shown alongside the ingredient on the recipe row.
+func AddRecipeIngredient(recipeID int64, name string, quantity *float64, unit, notes string) (*RecipeIngredient, error) {
 	var maxOrder int
 	DB.QueryRow("SELECT COALESCE(MAX(sort_order), -1) FROM recipe_ingredients WHERE recipe_id = ?", recipeID).Scan(&maxOrder)
 
@@ -2179,9 +2254,9 @@ func AddRecipeIngredient(recipeID int64, name string, quantity *int, unit string
 	}
 
 	result, err := DB.Exec(`
-		INSERT INTO recipe_ingredients (recipe_id, name, quantity, unit, sort_order)
-		VALUES (?, ?, ?, ?, ?)
-	`, recipeID, name, qtyArg, unit, maxOrder+1)
+		INSERT INTO recipe_ingredients (recipe_id, name, quantity, unit, notes, sort_order)
+		VALUES (?, ?, ?, ?, ?, ?)
+	`, recipeID, name, qtyArg, unit, notes, maxOrder+1)
 	if err != nil {
 		return nil, err
 	}
@@ -2191,25 +2266,30 @@ func AddRecipeIngredient(recipeID int64, name string, quantity *int, unit string
 }
 
 // GetRecipeIngredient returns a single ingredient by ID.
+// LEFT JOIN item_history populates image_path on the embedded ingredient.
 func GetRecipeIngredient(id int64) (*RecipeIngredient, error) {
 	var ri RecipeIngredient
-	var qty sql.NullInt64
+	var qty sql.NullFloat64
 	err := DB.QueryRow(`
-		SELECT id, recipe_id, name, quantity, unit, sort_order, created_at
-		FROM recipe_ingredients WHERE id = ?
-	`, id).Scan(&ri.ID, &ri.RecipeID, &ri.Name, &qty, &ri.Unit, &ri.SortOrder, &ri.CreatedAt)
+		SELECT ri.id, ri.recipe_id, ri.name, ri.quantity, ri.unit,
+		       COALESCE(ri.notes, '') AS notes, ri.sort_order, ri.created_at,
+		       COALESCE(ih.image_path, '') AS image_path
+		FROM recipe_ingredients ri
+		LEFT JOIN item_history ih ON ri.name = ih.name COLLATE NOCASE
+		WHERE ri.id = ?
+	`, id).Scan(&ri.ID, &ri.RecipeID, &ri.Name, &qty, &ri.Unit, &ri.Notes, &ri.SortOrder, &ri.CreatedAt, &ri.ImagePath)
 	if err != nil {
 		return nil, err
 	}
 	if qty.Valid {
-		q := int(qty.Int64)
+		q := qty.Float64
 		ri.Quantity = &q
 	}
 	return &ri, nil
 }
 
-// UpdateRecipeIngredient updates an ingredient's name, quantity, and unit.
-func UpdateRecipeIngredient(id int64, name string, quantity *int, unit string) error {
+// UpdateRecipeIngredient updates an ingredient's name, quantity, unit, and notes.
+func UpdateRecipeIngredient(id int64, name string, quantity *float64, unit, notes string) error {
 	var qtyArg interface{}
 	if quantity == nil {
 		qtyArg = nil
@@ -2217,9 +2297,9 @@ func UpdateRecipeIngredient(id int64, name string, quantity *int, unit string) e
 		qtyArg = *quantity
 	}
 	_, err := DB.Exec(`
-		UPDATE recipe_ingredients SET name = ?, quantity = ?, unit = ?
+		UPDATE recipe_ingredients SET name = ?, quantity = ?, unit = ?, notes = ?
 		WHERE id = ?
-	`, name, qtyArg, unit, id)
+	`, name, qtyArg, unit, notes, id)
 	return err
 }
 
@@ -2277,9 +2357,9 @@ func AddRecipeStep(recipeID int64, content string) (*RecipeStep, error) {
 func GetRecipeStep(id int64) (*RecipeStep, error) {
 	var s RecipeStep
 	err := DB.QueryRow(`
-		SELECT id, recipe_id, step_number, content, created_at
+		SELECT id, recipe_id, step_number, content, COALESCE(completed, FALSE), created_at
 		FROM recipe_steps WHERE id = ?
-	`, id).Scan(&s.ID, &s.RecipeID, &s.StepNumber, &s.Content, &s.CreatedAt)
+	`, id).Scan(&s.ID, &s.RecipeID, &s.StepNumber, &s.Content, &s.Completed, &s.CreatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -2441,16 +2521,303 @@ func pickSectionForIngredientTx(tx *sql.Tx, listID int64, name string) (int64, e
 	return findOrCreateRecipeIngredientsSectionTx(tx, listID)
 }
 
-// ApplyRecipeToList adds the chosen ingredients from a recipe to the target list.
-// Behavior per ingredient (case-insensitive name match within the target list):
-//   - existing active item: add this ingredient's quantity to it.
-//   - existing completed item: reactivate (completed=false) and add quantity.
-//   - no existing item: create a new one. Section comes from item_history.last_section_id
-//     (if it points to a section in this list), else from an auto-created
-//     "Recipe ingredients" section. Description is the human-formatted unit.
+// MeasurementUnits are cooking/measurement units. When applying a recipe to a
+// list, list-qty stays at 1 and the recipe amount goes into description.
+// Multiple measurement-unit ingredients with the same unit auto-combine (e.g.
+// "1 cup" + "1 cup" -> "2 cup").
+var MeasurementUnits = map[string]bool{
+	"tsp":   true,
+	"tbsp":  true,
+	"cup":   true,
+	"fl_oz": true,
+	"oz":    true,
+	"lb":    true,
+	"g":     true,
+	"kg":    true,
+	"ml":    true,
+	"l":     true,
+}
+
+// PackageUnits are discrete/package units. List-qty multiplies (qty = ceil of
+// recipe qty). Description gets unit + notes; "whole" hides the unit entirely.
+var PackageUnits = map[string]bool{
+	"whole":   true,
+	"can":     true,
+	"jar":     true,
+	"bottle":  true,
+	"package": true,
+	"bunch":   true,
+	"head":    true,
+	"dozen":   true,
+	"slice":   true,
+	"loaf":    true,
+	"clove":   true,
+}
+
+// formatUnitDescription mirrors handlers.formatUnitForDescription.
+// Defined here too because db/queries.go can't import the handlers package.
+func formatUnitDescription(unit string) string {
+	switch unit {
+	case "to_taste":
+		return "to taste"
+	case "fl_oz":
+		return "fl oz"
+	default:
+		return unit
+	}
+}
+
+// formatQtyForDescription renders a float quantity into a compact string for
+// item descriptions. Mirrors the JS formatQuantity helper in static/recipe.js
+// so server-rendered descriptions match what users see on the recipe page.
+//   2.0   -> "2"
+//   0.5   -> "½"
+//   1.5   -> "1½"
+//   2.75  -> "2¾"
+//   1/3   -> "⅓" (0.33 or 0.34)
+//   1.7   -> "1.7"   (no glyph, falls back to up-to-2-decimal)
+//   0.123 -> "0.12"
+func formatQtyForDescription(q float64) string {
+	if q == math.Trunc(q) {
+		return strconv.FormatFloat(q, 'f', 0, 64)
+	}
+	whole := math.Trunc(q)
+	frac := math.Round((q-whole)*100) / 100
+	glyph := fractionGlyph(frac)
+	if glyph != "" {
+		if whole == 0 {
+			return glyph
+		}
+		return strconv.FormatFloat(whole, 'f', 0, 64) + glyph
+	}
+	s := strconv.FormatFloat(q, 'f', 2, 64)
+	// Trim trailing zeros after decimal point.
+	s = strings.TrimRight(s, "0")
+	s = strings.TrimRight(s, ".")
+	return s
+}
+
+// fractionGlyph maps the common quarter/third fractions to their unicode
+// glyph; returns "" for anything else so the caller can fall back to decimals.
+// Both 0.33 and 0.34 map to ⅓ because rounding to 2 decimals can give either.
+func fractionGlyph(frac float64) string {
+	switch frac {
+	case 0.25:
+		return "¼"
+	case 0.5:
+		return "½"
+	case 0.75:
+		return "¾"
+	case 0.33, 0.34:
+		return "⅓"
+	case 0.66, 0.67:
+		return "⅔"
+	}
+	return ""
+}
+
+// joinNotesIntoDescription appends notes after a middle-dot separator if both
+// sides are non-empty. Mirrors the recipe-row UI ("½ cup Sugar · 15 oz cans").
+// The result is run through dedupDescriptionSegments so re-applying a recipe
+// with identical notes doesn't accumulate "for sweetness · for sweetness".
+func joinNotesIntoDescription(left, notes string) string {
+	if notes == "" {
+		return dedupDescriptionSegments(left)
+	}
+	if left == "" {
+		return dedupDescriptionSegments(notes)
+	}
+	return dedupDescriptionSegments(left + " · " + notes)
+}
+
+// dedupDescriptionSegments splits an item description on " · " and removes
+// duplicate segments while preserving order. Comparison is case-insensitive
+// on trimmed segments; the original casing of the first occurrence is kept.
 //
-// "to taste" ingredients (quantity NULL) only ensure the item exists; quantity
-// is left unchanged on existing items, set to 0 on new items.
+// Used by every description-building path in ApplyRecipeToList so that
+// re-applying a recipe with the same notes ("for sweetness") doesn't double up
+// the segment list. Empty input returns empty.
+func dedupDescriptionSegments(desc string) string {
+	if desc == "" {
+		return ""
+	}
+	parts := strings.Split(desc, " · ")
+	out := make([]string, 0, len(parts))
+	seen := make(map[string]struct{}, len(parts))
+	for _, p := range parts {
+		key := strings.ToLower(strings.TrimSpace(p))
+		if key == "" {
+			continue
+		}
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, p)
+	}
+	return strings.Join(out, " · ")
+}
+
+// existingMeasurementParse tries to read a "<qty> <unit>" prefix from an
+// existing item.description so apply-to-list can combine same-unit amounts.
+// Returns (qty, unitToken, restOfDescription, true) on success.
+//
+// Accepts: integer ("2"), decimal ("1.5"), bare fraction ("1/2"), unicode
+// fractions ("¼ ½ ¾ ⅓ ⅔"), and mixed forms ("1¼", "1 1/2"). On parse failure
+// returns (_,_,_,false) and the caller falls back to concatenation.
+func existingMeasurementParse(desc string) (float64, string, string, bool) {
+	desc = strings.TrimSpace(desc)
+	if desc == "" {
+		return 0, "", "", false
+	}
+
+	// Split off the leading qty token (everything up to the first space).
+	// Then take the next whitespace-separated token as the unit.
+	parts := strings.SplitN(desc, " ", 3)
+	if len(parts) < 2 {
+		return 0, "", "", false
+	}
+	qtyTok := parts[0]
+	unitTok := parts[1]
+	rest := ""
+	if len(parts) == 3 {
+		rest = parts[2]
+	}
+
+	q, ok := parseQtyToken(qtyTok)
+	if !ok {
+		// Maybe the qty is "1 1/2" — split-by-3 already captured 2 tokens.
+		// Try interpreting parts[0]+" "+parts[1] as a mixed number, parts[2] as unit.
+		if len(parts) == 3 {
+			if mixed, ok2 := parseQtyToken(qtyTok + " " + unitTok); ok2 {
+				// Re-split rest into "unit" + remaining.
+				rp := strings.SplitN(rest, " ", 2)
+				if len(rp) == 0 {
+					return 0, "", "", false
+				}
+				newUnit := rp[0]
+				newRest := ""
+				if len(rp) == 2 {
+					newRest = rp[1]
+				}
+				return mixed, newUnit, newRest, true
+			}
+		}
+		return 0, "", "", false
+	}
+	return q, unitTok, rest, true
+}
+
+// parseQtyToken handles integer, decimal, bare fraction (1/2), single unicode
+// fraction glyphs, and mixed forms ("1¼", "1 1/2").
+func parseQtyToken(tok string) (float64, bool) {
+	tok = strings.TrimSpace(tok)
+	if tok == "" {
+		return 0, false
+	}
+
+	// Plain integer or decimal.
+	if v, err := strconv.ParseFloat(tok, 64); err == nil {
+		return v, true
+	}
+
+	// Bare fraction "1/2".
+	if v, ok := parseBareFraction(tok); ok {
+		return v, true
+	}
+
+	// Single unicode fraction.
+	if v, ok := unicodeFractionValue(tok); ok {
+		return v, true
+	}
+
+	// Mixed: leading integer + trailing unicode fraction ("1¼").
+	for i, r := range tok {
+		// Look for the first non-digit character.
+		if r < '0' || r > '9' {
+			intPart := tok[:i]
+			fracPart := tok[i:]
+			if intPart == "" {
+				return 0, false
+			}
+			intVal, err := strconv.Atoi(intPart)
+			if err != nil {
+				return 0, false
+			}
+			if v, ok := unicodeFractionValue(fracPart); ok {
+				return float64(intVal) + v, true
+			}
+			if v, ok := parseBareFraction(fracPart); ok {
+				return float64(intVal) + v, true
+			}
+			return 0, false
+		}
+	}
+
+	// Mixed: "1 1/2" (came in as a single concatenated token "1 1/2" — handled
+	// by recipientParse already; here we split on space ourselves).
+	if sp := strings.SplitN(tok, " ", 2); len(sp) == 2 {
+		i, ierr := strconv.Atoi(sp[0])
+		f, fok := parseBareFraction(sp[1])
+		if ierr == nil && fok {
+			return float64(i) + f, true
+		}
+	}
+
+	return 0, false
+}
+
+func parseBareFraction(s string) (float64, bool) {
+	parts := strings.SplitN(s, "/", 2)
+	if len(parts) != 2 {
+		return 0, false
+	}
+	num, err1 := strconv.Atoi(parts[0])
+	den, err2 := strconv.Atoi(parts[1])
+	if err1 != nil || err2 != nil || den == 0 {
+		return 0, false
+	}
+	return float64(num) / float64(den), true
+}
+
+func unicodeFractionValue(s string) (float64, bool) {
+	switch s {
+	case "¼":
+		return 0.25, true
+	case "½":
+		return 0.5, true
+	case "¾":
+		return 0.75, true
+	case "⅓":
+		return 1.0 / 3.0, true
+	case "⅔":
+		return 2.0 / 3.0, true
+	}
+	return 0, false
+}
+
+// ApplyRecipeToList adds the chosen ingredients from a recipe to the target list.
+//
+// Per-ingredient behavior depends on the unit type:
+//
+// MEASUREMENT units (tsp, tbsp, cup, fl_oz, oz, lb, g, kg, ml, l):
+//   - New item: qty = 1, description = "<recipe_qty> <unit>" + " · <notes>".
+//   - Existing item: qty unchanged. If the existing description starts with
+//     "<num> <same_unit>", combine numerically: "(old+new) <unit>" + merged notes.
+//     Otherwise append " + <recipe_qty> <unit>" to the existing description.
+//
+// PACKAGE units (whole, can, jar, bottle, package, bunch, head, dozen, slice,
+// loaf, clove):
+//   - New item: qty = ceil(recipe_qty), description = "<unit>" + " · <notes>".
+//     Special case for "whole": unit hidden, only notes shown.
+//   - Existing item: qty += ceil(recipe_qty). Description left alone.
+//
+// to_taste:
+//   - New item: qty = 1, description = "to taste" + " · <notes>".
+//   - Existing item: no change.
+//
+// Reactivation: if the matching item is completed, it gets reactivated
+// (completed=false) regardless of unit type, mirroring CreateItem behavior.
 //
 // All work happens in a single transaction.
 func ApplyRecipeToList(recipeID, targetListID int64, ingredientIDs []int64) error {
@@ -2464,7 +2831,6 @@ func ApplyRecipeToList(recipeID, targetListID int64, ingredientIDs []int64) erro
 	}
 	defer tx.Rollback()
 
-	// Verify target list exists.
 	var listExists int
 	if err := tx.QueryRow(`SELECT COUNT(*) FROM lists WHERE id = ?`, targetListID).Scan(&listExists); err != nil {
 		return err
@@ -2473,7 +2839,6 @@ func ApplyRecipeToList(recipeID, targetListID int64, ingredientIDs []int64) erro
 		return fmt.Errorf("target list %d not found", targetListID)
 	}
 
-	// Build placeholder list for the ingredient ID filter.
 	placeholders := make([]string, len(ingredientIDs))
 	args := []interface{}{recipeID}
 	for i, id := range ingredientIDs {
@@ -2482,7 +2847,7 @@ func ApplyRecipeToList(recipeID, targetListID int64, ingredientIDs []int64) erro
 	}
 
 	query := fmt.Sprintf(`
-		SELECT id, recipe_id, name, quantity, unit, sort_order
+		SELECT id, recipe_id, name, quantity, unit, COALESCE(notes, ''), sort_order
 		FROM recipe_ingredients
 		WHERE recipe_id = ? AND id IN (%s)
 		ORDER BY sort_order ASC
@@ -2494,20 +2859,23 @@ func ApplyRecipeToList(recipeID, targetListID int64, ingredientIDs []int64) erro
 	}
 	type chosen struct {
 		Name     string
-		Quantity *int
+		Quantity *float64
 		Unit     string
+		Notes    string
 	}
 	var picks []chosen
 	for rows.Next() {
-		var ri RecipeIngredient
-		var qty sql.NullInt64
-		if err := rows.Scan(&ri.ID, &ri.RecipeID, &ri.Name, &qty, &ri.Unit, &ri.SortOrder); err != nil {
+		var id, rid int64
+		var name, unit, notes string
+		var qty sql.NullFloat64
+		var sortOrder int
+		if err := rows.Scan(&id, &rid, &name, &qty, &unit, &notes, &sortOrder); err != nil {
 			rows.Close()
 			return err
 		}
-		c := chosen{Name: ri.Name, Unit: ri.Unit}
+		c := chosen{Name: name, Unit: unit, Notes: notes}
 		if qty.Valid {
-			q := int(qty.Int64)
+			q := qty.Float64
 			c.Quantity = &q
 		}
 		picks = append(picks, c)
@@ -2524,68 +2892,186 @@ func ApplyRecipeToList(recipeID, targetListID int64, ingredientIDs []int64) erro
 			return err
 		}
 
-		// Quantity to add (0 for "to taste").
-		addQty := 0
-		if pick.Quantity != nil {
-			addQty = *pick.Quantity
-		}
-
-		if existing != nil {
-			// Active or completed match — add quantity (skip for "to taste").
-			newQty := existing.Quantity + addQty
-			if existing.Completed {
-				if _, err := tx.Exec(`
-					UPDATE items SET completed = FALSE, quantity = ?, updated_at = strftime('%s','now')
-					WHERE id = ?
-				`, newQty, existing.ID); err != nil {
-					return err
+		switch {
+		case pick.Unit == "to_taste":
+			if existing != nil {
+				if existing.Completed {
+					if _, err := tx.Exec(`
+						UPDATE items SET completed = FALSE, updated_at = strftime('%s','now')
+						WHERE id = ?
+					`, existing.ID); err != nil {
+						return err
+					}
 				}
-			} else if addQty > 0 {
-				if _, err := tx.Exec(`
-					UPDATE items SET quantity = ?, updated_at = strftime('%s','now')
-					WHERE id = ?
-				`, newQty, existing.ID); err != nil {
+				SaveItemHistoryTx(tx, pick.Name, existing.SectionID)
+				continue
+			}
+			desc := joinNotesIntoDescription("to taste", pick.Notes)
+			if err := insertNewRecipeItem(tx, targetListID, pick.Name, desc, 1); err != nil {
+				return err
+			}
+
+		case PackageUnits[pick.Unit]:
+			recQty := 0.0
+			if pick.Quantity != nil {
+				recQty = *pick.Quantity
+			}
+			addQty := int(math.Ceil(recQty))
+			if addQty < 1 {
+				addQty = 1
+			}
+			if existing != nil {
+				newQty := existing.Quantity + addQty
+				if existing.Completed {
+					if _, err := tx.Exec(`
+						UPDATE items SET completed = FALSE, quantity = ?, updated_at = strftime('%s','now')
+						WHERE id = ?
+					`, newQty, existing.ID); err != nil {
+						return err
+					}
+				} else {
+					if _, err := tx.Exec(`
+						UPDATE items SET quantity = ?, updated_at = strftime('%s','now')
+						WHERE id = ?
+					`, newQty, existing.ID); err != nil {
+						return err
+					}
+				}
+				SaveItemHistoryTx(tx, pick.Name, existing.SectionID)
+				continue
+			}
+			// New item — for "whole" we hide the unit AND the qty (just notes,
+			// e.g. "large, white" for "1 large white onion"). For all other
+			// packaging units we preserve the original recipe quantity so the
+			// user can still see "1½ dozen" or "2 can" even though the list-side
+			// quantity is the ceiled integer count.
+			descLeft := ""
+			if pick.Unit != "whole" {
+				if recQty > 0 {
+					descLeft = formatQtyForDescription(recQty) + " " + formatUnitDescription(pick.Unit)
+				} else {
+					descLeft = formatUnitDescription(pick.Unit)
+				}
+			}
+			desc := joinNotesIntoDescription(descLeft, pick.Notes)
+			if err := insertNewRecipeItem(tx, targetListID, pick.Name, desc, addQty); err != nil {
+				return err
+			}
+
+		case MeasurementUnits[pick.Unit]:
+			recQty := 0.0
+			if pick.Quantity != nil {
+				recQty = *pick.Quantity
+			}
+			if existing != nil {
+				newDesc := combineMeasurementDescription(existing.Description, recQty, pick.Unit, pick.Notes)
+				if existing.Completed {
+					if _, err := tx.Exec(`
+						UPDATE items SET completed = FALSE, description = ?, updated_at = strftime('%s','now')
+						WHERE id = ?
+					`, newDesc, existing.ID); err != nil {
+						return err
+					}
+				} else {
+					if _, err := tx.Exec(`
+						UPDATE items SET description = ?, updated_at = strftime('%s','now')
+						WHERE id = ?
+					`, newDesc, existing.ID); err != nil {
+						return err
+					}
+				}
+				SaveItemHistoryTx(tx, pick.Name, existing.SectionID)
+				continue
+			}
+			descLeft := formatQtyForDescription(recQty) + " " + formatUnitDescription(pick.Unit)
+			desc := joinNotesIntoDescription(descLeft, pick.Notes)
+			if err := insertNewRecipeItem(tx, targetListID, pick.Name, desc, 1); err != nil {
+				return err
+			}
+
+		default:
+			// Unknown unit — defensive fallback (should not happen because handler
+			// validates unit before reaching here).
+			descLeft := formatUnitDescription(pick.Unit)
+			desc := joinNotesIntoDescription(descLeft, pick.Notes)
+			if existing == nil {
+				if err := insertNewRecipeItem(tx, targetListID, pick.Name, desc, 1); err != nil {
 					return err
 				}
 			}
-			// History bump so suggestions stay fresh.
-			SaveItemHistoryTx(tx, pick.Name, existing.SectionID)
-			continue
 		}
-
-		// No existing item — create one.
-		sectionID, err := pickSectionForIngredientTx(tx, targetListID, pick.Name)
-		if err != nil {
-			return err
-		}
-
-		var maxItemOrder int
-		tx.QueryRow("SELECT COALESCE(MAX(sort_order), -1) FROM items WHERE section_id = ?", sectionID).Scan(&maxItemOrder)
-
-		if _, err := tx.Exec(`
-			INSERT INTO items (section_id, name, description, quantity, sort_order)
-			VALUES (?, ?, ?, ?, ?)
-		`, sectionID, pick.Name, formatUnitDescription(pick.Unit), addQty, maxItemOrder+1); err != nil {
-			return err
-		}
-
-		SaveItemHistoryTx(tx, pick.Name, sectionID)
 	}
 
 	return tx.Commit()
 }
 
-// formatUnitDescription mirrors handlers.formatUnitForDescription.
-// Defined here too because db/queries.go can't import the handlers package.
-func formatUnitDescription(unit string) string {
-	switch unit {
-	case "to_taste":
-		return "to taste"
-	case "fl_oz":
-		return "fl oz"
-	default:
-		return unit
+// insertNewRecipeItem is the new-item shared path used by all three unit-type
+// branches in ApplyRecipeToList. Picks a section, computes sort order, inserts,
+// and bumps history.
+func insertNewRecipeItem(tx *sql.Tx, listID int64, name, description string, quantity int) error {
+	sectionID, err := pickSectionForIngredientTx(tx, listID, name)
+	if err != nil {
+		return err
 	}
+	var maxItemOrder int
+	tx.QueryRow("SELECT COALESCE(MAX(sort_order), -1) FROM items WHERE section_id = ?", sectionID).Scan(&maxItemOrder)
+
+	if _, err := tx.Exec(`
+		INSERT INTO items (section_id, name, description, quantity, sort_order)
+		VALUES (?, ?, ?, ?, ?)
+	`, sectionID, name, description, quantity, maxItemOrder+1); err != nil {
+		return err
+	}
+	SaveItemHistoryTx(tx, name, sectionID)
+	return nil
+}
+
+// combineMeasurementDescription is the apply-to-list combiner for measurement
+// units. If the existing description starts with "<num> <same_unit>", combines
+// numerically and merges notes. Otherwise appends "+ <new_qty> <unit>" to keep
+// both pieces of info.
+//
+// existing might also include " · notes" suffix from a previous apply; the
+// parser handles that by treating everything after the unit token as `rest`.
+func combineMeasurementDescription(existingDesc string, addQty float64, unit, newNotes string) string {
+	addLeft := formatQtyForDescription(addQty) + " " + formatUnitDescription(unit)
+	addBlock := joinNotesIntoDescription(addLeft, newNotes)
+
+	q, parsedUnit, rest, ok := existingMeasurementParse(existingDesc)
+	if !ok {
+		// Existing isn't a "<qty> <unit>" prefix at all — append.
+		// The dedup pass on the right-hand side already collapsed identical
+		// notes inside addBlock; nothing to do here for the "+" join itself
+		// since segments on either side of " + " are intentionally separate.
+		if existingDesc == "" {
+			return addBlock
+		}
+		return dedupDescriptionSegments(existingDesc) + " + " + addBlock
+	}
+
+	if parsedUnit != formatUnitDescription(unit) {
+		// Different unit — append.
+		return dedupDescriptionSegments(existingDesc) + " + " + addBlock
+	}
+
+	// Same unit — combine. Sum the quantities; preserve trailing notes from
+	// either side. `rest` from the parse may include leading " · old notes".
+	sum := q + addQty
+	combinedLeft := formatQtyForDescription(sum) + " " + formatUnitDescription(unit)
+
+	// Pull notes off the existing description's `rest` block (everything after
+	// the leading "· "). This keeps the shape "<qty> <unit> · notes" idempotent.
+	existingNotes := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(rest), "·"))
+
+	mergedNotes := existingNotes
+	if newNotes != "" {
+		if mergedNotes == "" {
+			mergedNotes = newNotes
+		} else {
+			mergedNotes = mergedNotes + " · " + newNotes
+		}
+	}
+	return joinNotesIntoDescription(combinedLeft, mergedNotes)
 }
 
 // ==================== DATABASE CLEAR ====================

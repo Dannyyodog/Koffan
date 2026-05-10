@@ -35,13 +35,23 @@
                 {{range $list := .Lists}}
                 <div
                     id="home-list-{{$list.ID}}"
+                    data-list-id="{{$list.ID}}"
                     class="relative bg-white dark:bg-stone-800 rounded-xl border border-stone-200 dark:border-stone-700 p-4 flex items-center gap-4 hover:border-pink-200 dark:hover:border-pink-700 hover:shadow-md transition-all group w-full"
                     x-data="{ showActions: false, canMoveUp: true, canMoveDown: true }"
                 >
-                    <!-- Icon -->
+                    <!-- Cover image (when set) OR icon fallback -->
+                    {{if $list.CoverImagePath}}
+                    <a href="/lists/{{$list.ID}}" class="w-12 h-12 rounded-xl overflow-hidden flex-shrink-0 bg-stone-100 dark:bg-stone-700">
+                        <img src="/uploads/{{pstr $list.CoverImagePath}}"
+                             alt="{{$list.Name}}"
+                             class="w-full h-full object-cover"
+                             loading="lazy">
+                    </a>
+                    {{else}}
                     <a href="/lists/{{$list.ID}}" class="w-12 h-12 rounded-xl bg-pink-50 dark:bg-pink-900/30 flex items-center justify-center flex-shrink-0 group-hover:bg-pink-100 dark:group-hover:bg-pink-900/50 transition-colors text-2xl">
                         <span style="filter: grayscale(100%) sepia(50%) hue-rotate(-30deg) saturate(300%);">{{$list.Icon}}</span>
                     </a>
+                    {{end}}
 
                     <!-- Info (clickable) -->
                     <a href="/lists/{{$list.ID}}" class="flex-1 min-w-0">
@@ -992,6 +1002,15 @@ function homePage() {
                                 Alpine.destroyTree(el);
                                 el.remove();
                             }
+                        }
+                        break;
+                    case 'list_cover_updated':
+                        // Reload to pick up the new (or removed) cover thumb on the
+                        // matching list card. Cheaper alternatives exist (swap the
+                        // <img>/icon in place) but the template branches are
+                        // server-rendered so a reload is the simplest path.
+                        if (message.data?.list_id) {
+                            window.location.reload();
                         }
                         break;
                     case 'item_created':

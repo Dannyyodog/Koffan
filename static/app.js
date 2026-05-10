@@ -263,6 +263,13 @@ function shoppingList() {
         lightboxItemName: '',
         longPressTimer: null,
 
+        // List cover image state (mirrors the recipe-detail cover plumbing).
+        // coverImagePath is initialized from the data-cover-image-path attribute
+        // on the [data-list-id] root, set in init().
+        coverImagePath: '',
+        uploadingListCover: false,
+        listCoverLightboxOpen: false,
+
         // Edit item
         editingItem: null,
         editItemName: '',
@@ -331,6 +338,14 @@ function shoppingList() {
             this.initCompletedSectionsStore();
             this.initLocalActionTracking();
             this.cacheSuggestions();
+
+            // Seed list cover from the banner element rendered by templates/list.html.
+            // The banner data-cover-image-path attribute is set server-side; once
+            // we read it, all subsequent mutations flow through coverImagePath.
+            const banner = document.querySelector('.list-cover-banner');
+            if (banner && banner.dataset.coverImagePath) {
+                this.coverImagePath = banner.dataset.coverImagePath;
+            }
 
             // Listen for mobile action modal
             this.$el.addEventListener('open-mobile-action', (e) => {
@@ -993,6 +1008,18 @@ function shoppingList() {
                                     }
                                     this.refreshList();
                                 }
+                            }
+                        }
+                        break;
+                    case 'list_cover_updated':
+                        // Payload: { list_id, cover_image_url }; empty url = cleared.
+                        // Update the local banner without a full reload if this tab
+                        // is viewing the affected list.
+                        if (message.data?.list_id) {
+                            const currentListId2 = document.querySelector('[data-list-id]')?.dataset?.listId;
+                            if (String(message.data.list_id) === currentListId2) {
+                                const url = message.data?.cover_image_url || '';
+                                this.coverImagePath = url ? url.replace(/^\/uploads\//, '') : '';
                             }
                         }
                         break;
@@ -1987,6 +2014,80 @@ function shoppingList() {
             if (this.longPressTimer) {
                 clearTimeout(this.longPressTimer);
                 this.longPressTimer = null;
+            }
+        },
+
+        // ===== List cover image (banner at top of /lists/:id) =====
+
+        // Read the list ID from the data-list-id attribute on the root scope.
+        // Returns null if not on a list page.
+        currentListIdNum() {
+            const el = document.querySelector('[data-list-id]');
+            if (!el || !el.dataset.listId) return null;
+            const n = parseInt(el.dataset.listId, 10);
+            return Number.isFinite(n) ? n : null;
+        },
+
+        triggerListCoverUpload() {
+            const input = document.getElementById('list-cover-image-input');
+            if (input) input.click();
+        },
+
+        openListCoverLightbox() {
+            if (!this.coverImagePath) return;
+            this.listCoverLightboxOpen = true;
+        },
+
+        closeListCoverLightbox() {
+            this.listCoverLightboxOpen = false;
+        },
+
+        async uploadListCover(file) {
+            const listId = this.currentListIdNum();
+            if (!file || listId == null) return;
+            this.uploadingListCover = true;
+            const formData = new FormData();
+            formData.append('image', file);
+            try {
+                const response = await fetch('/lists/' + listId + '/cover-image', {
+                    method: 'POST',
+                    body: formData,
+                });
+                if (!response.ok) {
+                    const errText = await response.text();
+                    alert(errText || t('error.image_save_failed'));
+                    return;
+                }
+                const data = await response.json();
+                if (data && data.cover_image_url) {
+                    this.coverImagePath = data.cover_image_url.replace(/^\/uploads\//, '');
+                }
+            } catch (e) {
+                console.error('[List] uploadListCover failed:', e);
+                alert(t('error.image_save_failed'));
+            } finally {
+                this.uploadingListCover = false;
+                const input = document.getElementById('list-cover-image-input');
+                if (input) input.value = '';
+            }
+        },
+
+        async confirmRemoveListCover() {
+            const listId = this.currentListIdNum();
+            if (listId == null) return;
+            if (!confirm(t('lists.confirm_remove_cover'))) return;
+            try {
+                const response = await fetch('/lists/' + listId + '/cover-image', { method: 'DELETE' });
+                if (!response.ok) {
+                    const errText = await response.text();
+                    alert(errText || t('error.image_save_failed'));
+                    return;
+                }
+                this.coverImagePath = '';
+                this.closeListCoverLightbox();
+            } catch (e) {
+                console.error('[List] confirmRemoveListCover failed:', e);
+                alert(t('error.image_save_failed'));
             }
         },
 

@@ -34,6 +34,8 @@ func Register(app *fiber.App) {
 	v1.Get("/lists/:id/sections", GetListSections)
 	v1.Post("/lists/:id/move-up", MoveListUp)
 	v1.Post("/lists/:id/move-down", MoveListDown)
+	v1.Post("/lists/:id/cover-image", UploadListCoverImage)
+	v1.Delete("/lists/:id/cover-image", DeleteListCoverImage)
 
 	// Sections endpoints
 	v1.Get("/sections/:id", GetSection)
@@ -83,4 +85,10 @@ func Register(app *fiber.App) {
 	v1.Post("/recipes/:id/apply", ApplyRecipe)
 	v1.Post("/recipes/:id/cover-image", UploadRecipeCoverImage)
 	v1.Delete("/recipes/:id/cover-image", DeleteRecipeCoverImage)
+	v1.Post("/recipes/:id/steps/:stepId/toggle", ToggleRecipeStepCompleted)
+	v1.Post("/recipes/:id/steps/reset-completed", ResetRecipeStepsCompleted)
+
+	// Image-by-name endpoints (used for ingredient image upload)
+	v1.Post("/image-by-name/:name", UploadImageByName)
+	v1.Delete("/image-by-name/:name", DeleteImageByName)
 }

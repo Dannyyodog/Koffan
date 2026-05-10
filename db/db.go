@@ -185,6 +185,15 @@ func runMigrations() {
 	migrateRecipes()
 	migrateRecipeIngredients()
 	migrateRecipeSteps()
+
+	// Migration: recipe_ingredients.quantity REAL + notes TEXT
+	migrateRecipeIngredientsDecimal()
+
+	// Migration: recipe_steps.completed BOOLEAN
+	migrateRecipeStepsCompleted()
+
+	// Migration: lists.cover_image_path TEXT
+	migrateListsCoverImage()
 }
 
 func migrateToMultipleLists() {
@@ -507,6 +516,135 @@ func migrateRecipeSteps() {
 	}
 
 	log.Println("Migration completed: Recipe steps table added")
+}
+
+// migrateRecipeIngredientsDecimal handles two changes at once:
+//  1. quantity INTEGER -> REAL (so recipes can store decimals like 0.5 cup)
+//  2. notes TEXT DEFAULT '' (new column)
+//
+// SQLite doesn't support changing a column type via ALTER TABLE, so we use the
+// standard rename-and-recreate dance. Probe is "quantity column type is still
+// INTEGER OR notes column doesn't exist" — once both are fixed, this no-ops.
+func migrateRecipeIngredientsDecimal() {
+	var qtyType string
+	if err := DB.QueryRow("SELECT type FROM pragma_table_info('recipe_ingredients') WHERE name='quantity'").Scan(&qtyType); err != nil {
+		log.Println("Migration check failed:", err)
+		return
+	}
+
+	var notesCount int
+	if err := DB.QueryRow("SELECT COUNT(*) FROM pragma_table_info('recipe_ingredients') WHERE name='notes'").Scan(&notesCount); err != nil {
+		log.Println("Migration check failed:", err)
+		return
+	}
+
+	// Already migrated when quantity is REAL AND notes already exists.
+	if qtyType == "REAL" && notesCount > 0 {
+		return
+	}
+
+	log.Println("Running migration: Converting recipe_ingredients.quantity to REAL and adding notes...")
+
+	tx, err := DB.Begin()
+	if err != nil {
+		log.Println("Migration failed - begin:", err)
+		return
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.Exec(`
+		CREATE TABLE recipe_ingredients_new (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			recipe_id INTEGER NOT NULL,
+			name TEXT NOT NULL,
+			quantity REAL DEFAULT NULL,
+			unit TEXT NOT NULL DEFAULT 'whole',
+			notes TEXT DEFAULT '',
+			sort_order INTEGER NOT NULL,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			FOREIGN KEY (recipe_id) REFERENCES recipes(id) ON DELETE CASCADE
+		);
+	`); err != nil {
+		log.Println("Migration failed - creating recipe_ingredients_new:", err)
+		return
+	}
+
+	// Copy old rows. notes defaults to '' for pre-migration rows. CAST keeps
+	// existing integer quantities as REAL (e.g. 4 -> 4.0).
+	if _, err := tx.Exec(`
+		INSERT INTO recipe_ingredients_new (id, recipe_id, name, quantity, unit, notes, sort_order, created_at)
+		SELECT id, recipe_id, name, CAST(quantity AS REAL), unit, '' AS notes, sort_order, created_at
+		FROM recipe_ingredients
+	`); err != nil {
+		log.Println("Migration failed - copying recipe_ingredients:", err)
+		return
+	}
+
+	if _, err := tx.Exec(`DROP TABLE recipe_ingredients`); err != nil {
+		log.Println("Migration failed - dropping old recipe_ingredients:", err)
+		return
+	}
+	if _, err := tx.Exec(`ALTER TABLE recipe_ingredients_new RENAME TO recipe_ingredients`); err != nil {
+		log.Println("Migration failed - renaming recipe_ingredients_new:", err)
+		return
+	}
+	if _, err := tx.Exec(`CREATE INDEX IF NOT EXISTS idx_recipe_ingredients_recipe ON recipe_ingredients(recipe_id, sort_order)`); err != nil {
+		log.Println("Migration failed - recreating index:", err)
+		return
+	}
+
+	if err := tx.Commit(); err != nil {
+		log.Println("Migration failed - commit:", err)
+		return
+	}
+
+	log.Println("Migration completed: recipe_ingredients.quantity -> REAL, notes added")
+}
+
+func migrateRecipeStepsCompleted() {
+	var count int
+	err := DB.QueryRow("SELECT COUNT(*) FROM pragma_table_info('recipe_steps') WHERE name='completed'").Scan(&count)
+	if err != nil {
+		log.Println("Migration check failed:", err)
+		return
+	}
+
+	if count > 0 {
+		return // Already migrated
+	}
+
+	log.Println("Running migration: Adding completed to recipe_steps...")
+
+	_, err = DB.Exec("ALTER TABLE recipe_steps ADD COLUMN completed BOOLEAN DEFAULT FALSE")
+	if err != nil {
+		log.Println("Migration failed - adding completed to recipe_steps:", err)
+		return
+	}
+
+	log.Println("Migration completed: recipe_steps.completed added")
+}
+
+func migrateListsCoverImage() {
+	var count int
+	err := DB.QueryRow("SELECT COUNT(*) FROM pragma_table_info('lists') WHERE name='cover_image_path'").Scan(&count)
+	if err != nil {
+		log.Println("Migration check failed:", err)
+		return
+	}
+
+	if count > 0 {
+		return // Already migrated
+	}
+
+	log.Println("Running migration: Adding cover_image_path to lists...")
+
+	_, err = DB.Exec("ALTER TABLE lists ADD COLUMN cover_image_path TEXT DEFAULT NULL")
+	if err != nil {
+		log.Println("Migration failed - adding cover_image_path to lists:", err)
+		return
+	}
+
+	log.Println("Migration completed: lists.cover_image_path added")
 }
 
 func Close() {

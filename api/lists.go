@@ -324,6 +324,18 @@ func MoveListUp(c *fiber.Ctx) error {
 	return c.JSON(list)
 }
 
+// UploadListCoverImage and DeleteListCoverImage are thin pass-throughs to
+// the handlers package — multipart upload / no-body delete with JSON / 204
+// responses; identical shape for HTMX and REST callers.
+
+func UploadListCoverImage(c *fiber.Ctx) error {
+	return handlers.UploadListCoverImage(c)
+}
+
+func DeleteListCoverImage(c *fiber.Ctx) error {
+	return handlers.DeleteListCoverImage(c)
+}
+
 // MoveListDown moves a list down in sort order
 func MoveListDown(c *fiber.Ctx) error {
 	id, err := c.ParamsInt("id")

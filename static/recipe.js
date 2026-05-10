@@ -12,6 +12,7 @@ function recipeView(recipeId) {
         editIngredientName: '',
         editIngredientQty: 1,
         editIngredientUnit: 'whole',
+        editIngredientNotes: '',
         editingStepId: null,
         editStepContent: '',
 
@@ -20,8 +21,13 @@ function recipeView(recipeId) {
         newIngredientName: '',
         newIngredientQty: 1,
         newIngredientUnit: 'whole',
+        newIngredientNotes: '',
         addingStep: false,
         newStepContent: '',
+
+        // Ingredient image lightbox + upload
+        uploadingIngredientName: null,    // lower-cased name currently uploading, or null
+        ingredientLightbox: { open: false, name: '', imagePath: '' },
 
         // Floating + popup
         showActionMenu: false,
@@ -50,11 +56,57 @@ function recipeView(recipeId) {
         _ingredientsSortable: null,
         _stepsSortable: null,
 
-        // Unit list — keep in sync with handlers/recipes.go validUnits.
-        unitOptions: ['whole', 'tsp', 'tbsp', 'cup', 'fl_oz', 'oz', 'lb', 'g', 'kg', 'ml', 'l', 'to_taste'],
+        // Unit lists — kept grouped to match the optgroup-rendered <select>.
+        // Stay in sync with handlers/recipes.go validUnits + db.MeasurementUnits/PackageUnits.
+        cookingUnits: ['tsp', 'tbsp', 'cup', 'fl_oz', 'oz', 'lb', 'g', 'kg', 'ml', 'l'],
+        packageUnits: ['whole', 'can', 'jar', 'bottle', 'package', 'bunch', 'head', 'dozen', 'slice', 'loaf', 'clove'],
+        // Flat list (cooking + packaging + to_taste) for any code path that
+        // wants every valid unit in one array.
+        get unitOptions() {
+            return [...this.cookingUnits, ...this.packageUnits, 'to_taste'];
+        },
 
         t(key, params) {
             return window.t ? window.t(key, params) : key;
+        },
+
+        // ===== Quantity formatting + steppers =====
+
+        // formatQuantity converts a float quantity into a compact display string.
+        // Maps 0.25/0.5/0.75 + 1/3 + 2/3 to unicode glyphs; supports mixed numbers
+        // ("1½", "2¾"); falls back to up-to-2-decimal for anything else.
+        formatQuantity(q) {
+            if (q == null || isNaN(q)) return '';
+            if (q === 0) return '0';
+            const whole = Math.trunc(q);
+            const frac = +(q - whole).toFixed(2);
+            const fracMap = {
+                0:    '',
+                0.25: '¼',
+                0.5:  '½',
+                0.75: '¾',
+                0.33: '⅓',
+                0.34: '⅓',
+                0.67: '⅔',
+                0.66: '⅔',
+            };
+            if (fracMap[frac] !== undefined) {
+                if (whole === 0) return fracMap[frac] || '0';
+                return fracMap[frac] === '' ? String(whole) : (whole + fracMap[frac]);
+            }
+            // Anything else: trim trailing zeros from up-to-2 decimals.
+            return parseFloat(q.toFixed(2)).toString();
+        },
+
+        incrementQuantity(current) {
+            const v = (typeof current === 'number' ? current : parseFloat(current)) || 0;
+            return Math.round((v + 0.25) * 100) / 100;
+        },
+
+        decrementQuantity(current) {
+            const v = (typeof current === 'number' ? current : parseFloat(current)) || 0;
+            const next = Math.round((v - 0.25) * 100) / 100;
+            return next < 0.25 ? 0.25 : next;
         },
 
         async init() {
@@ -86,12 +138,15 @@ function recipeView(recipeId) {
             }
         },
 
+        // formatIngredient renders the visible row text. Uses unicode fractions
+        // for nice quantities, falls back to decimals otherwise. Notes are
+        // rendered separately by the template under the main row.
         formatIngredient(ing) {
             const unit = this.t('units.' + ing.unit);
             if (ing.unit === 'to_taste' || ing.quantity == null) {
                 return unit + ' ' + ing.name;
             }
-            return ing.quantity + ' ' + unit + ' ' + ing.name;
+            return this.formatQuantity(ing.quantity) + ' ' + unit + ' ' + ing.name;
         },
 
         // ===== Ingredients =====
@@ -103,11 +158,13 @@ function recipeView(recipeId) {
             this.editIngredientName = ing.name;
             this.editIngredientUnit = ing.unit;
             this.editIngredientQty = (ing.quantity != null ? ing.quantity : 1);
+            this.editIngredientNotes = ing.notes || '';
         },
 
         cancelEditIngredient() {
             this.editingIngredientId = null;
             this.editIngredientName = '';
+            this.editIngredientNotes = '';
         },
 
         async saveIngredient(ing) {
@@ -117,8 +174,9 @@ function recipeView(recipeId) {
             fd.append('name', name);
             fd.append('unit', this.editIngredientUnit);
             if (this.editIngredientUnit !== 'to_taste') {
-                fd.append('quantity', String(this.editIngredientQty || 1));
+                fd.append('quantity', String(this.editIngredientQty || 0.25));
             }
+            fd.append('notes', this.editIngredientNotes || '');
             try {
                 const response = await fetch('/recipes/' + this.recipeId + '/ingredients/' + ing.id, {
                     method: 'PUT',
@@ -160,12 +218,14 @@ function recipeView(recipeId) {
             this.newIngredientName = '';
             this.newIngredientQty = 1;
             this.newIngredientUnit = 'whole';
+            this.newIngredientNotes = '';
             this.$nextTick(() => this.$refs.newIngName?.focus());
         },
 
         cancelAddIngredient() {
             this.addingIngredient = false;
             this.newIngredientName = '';
+            this.newIngredientNotes = '';
         },
 
         async submitAddIngredient() {
@@ -175,8 +235,9 @@ function recipeView(recipeId) {
             fd.append('name', name);
             fd.append('unit', this.newIngredientUnit);
             if (this.newIngredientUnit !== 'to_taste') {
-                fd.append('quantity', String(this.newIngredientQty || 1));
+                fd.append('quantity', String(this.newIngredientQty || 0.25));
             }
+            fd.append('notes', this.newIngredientNotes || '');
             try {
                 const response = await fetch('/recipes/' + this.recipeId + '/ingredients', {
                     method: 'POST',
@@ -191,6 +252,7 @@ function recipeView(recipeId) {
                 this.newIngredientName = '';
                 this.newIngredientQty = 1;
                 this.newIngredientUnit = 'whole';
+                this.newIngredientNotes = '';
                 await this.loadRecipe();
             } catch (e) {
                 console.error('[Recipe] submitAddIngredient failed:', e);
@@ -479,6 +541,156 @@ function recipeView(recipeId) {
             }
         },
 
+        // ===== Step completion =====
+
+        // Toggle a step's completed flag. Optimistic UI: flip the local bool
+        // first so the checkbox reacts immediately, then confirm via the server.
+        // The server's broadcast (recipe_step_completed_changed) will land and
+        // re-set the flag — by then it should already match, so this is a no-op.
+        async toggleStepCompleted(stepId) {
+            const idx = (this.recipe.steps || []).findIndex(s => s.id === stepId);
+            if (idx < 0) return;
+            const wasCompleted = !!this.recipe.steps[idx].completed;
+            this.recipe.steps[idx].completed = !wasCompleted;
+            try {
+                const response = await fetch(
+                    '/recipes/' + this.recipeId + '/steps/' + stepId + '/toggle',
+                    { method: 'POST' }
+                );
+                if (!response.ok) {
+                    // Revert on failure.
+                    this.recipe.steps[idx].completed = wasCompleted;
+                    alert(this.t('error.toggle_failed'));
+                }
+            } catch (e) {
+                console.error('[Recipe] toggleStepCompleted failed:', e);
+                this.recipe.steps[idx].completed = wasCompleted;
+            }
+        },
+
+        async confirmResetSteps() {
+            if (!confirm(this.t('recipes.confirm_reset_steps'))) return;
+            try {
+                const response = await fetch(
+                    '/recipes/' + this.recipeId + '/steps/reset-completed',
+                    { method: 'POST' }
+                );
+                if (!response.ok) {
+                    alert(this.t('error.update_failed'));
+                    return;
+                }
+                // Optimistic: clear all locally so the button + strikethrough
+                // disappear before the WS broadcast arrives.
+                (this.recipe.steps || []).forEach(s => { s.completed = false; });
+            } catch (e) {
+                console.error('[Recipe] confirmResetSteps failed:', e);
+                alert(this.t('error.update_failed'));
+            }
+        },
+
+        // ===== Ingredient images (image-by-name endpoint) =====
+
+        // Open the lightbox for a specific ingredient. If the ingredient has
+        // no image, the lightbox renders an "Add ingredient image" button that
+        // delegates to triggerIngredientImageUpload.
+        openIngredientLightbox(ingredient) {
+            this.ingredientLightbox = {
+                open: true,
+                name: ingredient.name,
+                imagePath: ingredient.image_path || '',
+            };
+        },
+
+        closeIngredientLightbox() {
+            this.ingredientLightbox = { open: false, name: '', imagePath: '' };
+        },
+
+        // Trigger the OS file picker for an ingredient. The change handler
+        // calls uploadIngredientImage.
+        triggerIngredientImageUpload(name) {
+            // Stash the target name on the input so the @change handler knows
+            // who it belongs to (the lightbox closes between click + change).
+            const input = document.getElementById('ingredient-image-input');
+            if (!input) return;
+            input.dataset.targetName = name;
+            input.click();
+        },
+
+        async uploadIngredientImage(name, file) {
+            if (!file || !name) return;
+            const target = name;
+            this.uploadingIngredientName = target.toLowerCase();
+            const formData = new FormData();
+            formData.append('image', file);
+            try {
+                const response = await fetch(
+                    '/image-by-name/' + encodeURIComponent(target),
+                    { method: 'POST', body: formData }
+                );
+                if (!response.ok) {
+                    const err = await response.text();
+                    alert(err || this.t('error.image_save_failed'));
+                    return;
+                }
+                const data = await response.json();
+                const newPath = data && data.image_url
+                    ? data.image_url.replace(/^\/uploads\//, '')
+                    : '';
+                // Update every matching ingredient in this recipe so the
+                // thumbnails refresh without a full reload. The WS broadcast
+                // will also arrive but this keeps the UI snappy.
+                this.applyIngredientImageByName(target, newPath);
+                if (this.ingredientLightbox.open && this.ingredientLightbox.name &&
+                    this.ingredientLightbox.name.toLowerCase() === target.toLowerCase()) {
+                    this.ingredientLightbox.imagePath = newPath;
+                }
+            } catch (e) {
+                console.error('[Recipe] uploadIngredientImage failed:', e);
+                alert(this.t('error.image_save_failed'));
+            } finally {
+                this.uploadingIngredientName = null;
+                const input = document.getElementById('ingredient-image-input');
+                if (input) {
+                    input.value = '';
+                    delete input.dataset.targetName;
+                }
+            }
+        },
+
+        async confirmRemoveIngredientImage(name) {
+            if (!name) return;
+            if (!confirm(this.t('recipes.confirm_remove_ingredient_image'))) return;
+            try {
+                const response = await fetch(
+                    '/image-by-name/' + encodeURIComponent(name),
+                    { method: 'DELETE' }
+                );
+                if (!response.ok) {
+                    const err = await response.text();
+                    alert(err || this.t('error.image_save_failed'));
+                    return;
+                }
+                this.applyIngredientImageByName(name, '');
+                this.closeIngredientLightbox();
+            } catch (e) {
+                console.error('[Recipe] confirmRemoveIngredientImage failed:', e);
+                alert(this.t('error.image_save_failed'));
+            }
+        },
+
+        // Walk this recipe's ingredients and update image_path for every name
+        // that case-insensitively matches `name`. Used by both the local upload
+        // path and the WebSocket dispatcher (item_image_updated event).
+        applyIngredientImageByName(name, newPath) {
+            const target = (name || '').toLowerCase();
+            if (!this.recipe.ingredients) return;
+            this.recipe.ingredients.forEach(ing => {
+                if ((ing.name || '').toLowerCase() === target) {
+                    ing.image_path = newPath || '';
+                }
+            });
+        },
+
         // ===== SortableJS for drag-reorder =====
 
         initSortable() {
@@ -648,11 +860,40 @@ function recipeView(recipeId) {
                     case 'recipe_steps_reordered':
                         this.loadRecipe();
                         break;
+                    case 'recipe_step_completed_changed':
+                        // Payload: { recipe_id, step_id, completed }
+                        if (message.data?.recipe_id === this.recipe?.id) {
+                            const sid = message.data?.step_id;
+                            const idx = (this.recipe.steps || []).findIndex(s => s.id === sid);
+                            if (idx >= 0) {
+                                this.recipe.steps[idx].completed = !!message.data?.completed;
+                            }
+                        }
+                        break;
+                    case 'recipe_steps_reset':
+                        if (message.data?.recipe_id === this.recipe?.id) {
+                            (this.recipe.steps || []).forEach(s => { s.completed = false; });
+                        }
+                        break;
                     case 'recipe_cover_updated':
                         // Payload: { recipe_id, cover_image_url }; empty url means cleared.
                         if (message.data?.recipe_id === this.recipe?.id) {
                             const url = message.data?.cover_image_url || '';
                             this.recipe.cover_image_path = url ? url.replace(/^\/uploads\//, '') : null;
+                        }
+                        break;
+                    case 'item_image_updated':
+                        // Shared event: same broadcast item-image upload uses.
+                        // Walk this recipe's ingredients and update any whose name
+                        // matches case-insensitively. Lightbox state syncs too.
+                        if (message.data?.name) {
+                            const url = message.data?.image_url || '';
+                            const newPath = url ? url.replace(/^\/uploads\//, '') : '';
+                            this.applyIngredientImageByName(message.data.name, newPath);
+                            if (this.ingredientLightbox.open && this.ingredientLightbox.name &&
+                                this.ingredientLightbox.name.toLowerCase() === message.data.name.toLowerCase()) {
+                                this.ingredientLightbox.imagePath = newPath;
+                            }
                         }
                         break;
                 }

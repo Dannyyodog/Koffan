@@ -98,15 +98,16 @@
                 <div id="ingredients-list" class="divide-y divide-stone-100 dark:divide-stone-700">
                     <template x-for="ing in recipe.ingredients" :key="ing.id">
                         <div :data-ingredient-id="ing.id"
+                             :data-ingredient-name="ing.name"
                              class="ingredient-row group">
                             <!-- View row -->
                             <div x-show="editingIngredientId !== ing.id"
                                  @click="startEditIngredient(ing)"
-                                 class="flex items-center gap-2 px-4 py-3 cursor-pointer hover:bg-stone-50 dark:hover:bg-stone-700/50 transition-colors">
+                                 class="flex items-center gap-2 px-3 py-2 cursor-pointer hover:bg-stone-50 dark:hover:bg-stone-700/50 transition-colors">
                                 <!-- Drag handle -->
-                                <div class="drag-handle flex-shrink-0 w-5 h-8 flex items-center justify-center -ml-1 touch-none cursor-grab active:cursor-grabbing text-stone-300 dark:text-stone-600 hover:text-stone-400 dark:hover:text-stone-500"
+                                <div class="drag-handle flex-shrink-0 w-4 h-8 flex items-center justify-center touch-none cursor-grab active:cursor-grabbing text-stone-300 dark:text-stone-600 hover:text-stone-400 dark:hover:text-stone-500"
                                      @click.stop>
-                                    <svg class="w-4 h-5" fill="currentColor" viewBox="0 0 24 24">
+                                    <svg class="w-3 h-5" fill="currentColor" viewBox="0 0 24 24">
                                         <circle cx="9" cy="5" r="1.5"/>
                                         <circle cx="15" cy="5" r="1.5"/>
                                         <circle cx="9" cy="12" r="1.5"/>
@@ -115,11 +116,45 @@
                                         <circle cx="15" cy="19" r="1.5"/>
                                     </svg>
                                 </div>
-                                <p class="flex-1 text-sm text-stone-700 dark:text-stone-200 truncate"
-                                   x-text="formatIngredient(ing)"></p>
+                                <!-- Image thumbnail (LEFT JOIN item_history.image_path) -->
+                                <div class="ingredient-image relative w-10 h-10 flex-shrink-0 rounded overflow-hidden cursor-pointer"
+                                     @click.stop="openIngredientLightbox(ing)">
+                                    <template x-if="ing.image_path">
+                                        <img :src="'/uploads/' + ing.image_path"
+                                             :alt="ing.name"
+                                             class="w-full h-full object-cover"
+                                             loading="lazy">
+                                    </template>
+                                    <template x-if="!ing.image_path">
+                                        <div class="w-full h-full bg-stone-100 dark:bg-stone-700 flex items-center justify-center text-stone-400 dark:text-stone-500"
+                                             :aria-label="t('recipes.add_ingredient_image')">
+                                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z"></path>
+                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z"></path>
+                                            </svg>
+                                        </div>
+                                    </template>
+                                    <div class="absolute inset-0 bg-black/55 flex items-center justify-center"
+                                         x-show="uploadingIngredientName && uploadingIngredientName.toLowerCase() === (ing.name||'').toLowerCase()"
+                                         x-cloak
+                                         role="status">
+                                        <svg class="w-4 h-4 text-white animate-spin" fill="none" viewBox="0 0 24 24">
+                                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                                            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"></path>
+                                        </svg>
+                                    </div>
+                                </div>
+                                <!-- Name + qty + notes column -->
+                                <div class="flex-1 min-w-0">
+                                    <p class="text-sm text-stone-700 dark:text-stone-200 truncate"
+                                       x-text="formatIngredient(ing)"></p>
+                                    <p x-show="ing.notes" x-cloak
+                                       class="text-xs text-stone-400 dark:text-stone-500 truncate mt-0.5"
+                                       x-text="ing.notes"></p>
+                                </div>
                                 <button type="button"
                                         @click.stop="deleteIngredient(ing)"
-                                        class="p-1.5 rounded-md text-stone-300 dark:text-stone-500 hover:text-red-500 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30 opacity-0 group-hover:opacity-100 md:opacity-100 transition-opacity"
+                                        class="p-1.5 rounded-md text-stone-300 dark:text-stone-500 hover:text-red-500 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30 opacity-0 group-hover:opacity-100 md:opacity-100 transition-opacity flex-shrink-0"
                                         :title="t('common.delete')">
                                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
@@ -136,19 +171,42 @@
                                        maxlength="100"
                                        required
                                        class="w-full border border-stone-200 dark:border-stone-600 dark:bg-stone-700 dark:text-stone-100 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-pink-400">
-                                <div class="flex gap-2">
+                                <div class="flex gap-2 items-stretch">
                                     <select x-model="editIngredientUnit"
-                                            class="border border-stone-200 dark:border-stone-600 dark:bg-stone-700 dark:text-stone-100 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-pink-400 flex-shrink-0 w-28">
-                                        <template x-for="u in unitOptions" :key="u">
-                                            <option :value="u" x-text="t('units.' + u)"></option>
-                                        </template>
+                                            class="border border-stone-200 dark:border-stone-600 dark:bg-stone-700 dark:text-stone-100 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-pink-400 flex-shrink-0 w-32">
+                                        <optgroup :label="t('units.cooking_group')">
+                                            <template x-for="u in cookingUnits" :key="u">
+                                                <option :value="u" x-text="t('units.' + u)"></option>
+                                            </template>
+                                        </optgroup>
+                                        <optgroup :label="t('units.packaging_group')">
+                                            <template x-for="u in packageUnits" :key="u">
+                                                <option :value="u" x-text="t('units.' + u)"></option>
+                                            </template>
+                                        </optgroup>
+                                        <option value="to_taste" x-text="t('units.to_taste')"></option>
                                     </select>
-                                    <input x-show="editIngredientUnit !== 'to_taste'"
-                                           type="number" min="1" max="9999"
-                                           x-model.number="editIngredientQty"
-                                           :placeholder="t('recipes.quantity_label')"
-                                           class="border border-stone-200 dark:border-stone-600 dark:bg-stone-700 dark:text-stone-100 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-pink-400 flex-1">
+                                    <!-- Quantity stepper: − [number] + (hidden when to_taste) -->
+                                    <div x-show="editIngredientUnit !== 'to_taste'" class="flex flex-1 items-stretch">
+                                        <button type="button"
+                                                @click="editIngredientQty = decrementQuantity(editIngredientQty)"
+                                                :disabled="editIngredientQty <= 0.25"
+                                                :class="editIngredientQty <= 0.25 ? 'opacity-30 cursor-not-allowed' : 'hover:bg-stone-100 dark:hover:bg-stone-600'"
+                                                class="px-3 border border-stone-200 dark:border-stone-600 dark:bg-stone-700 dark:text-stone-100 rounded-l-lg text-base font-medium">−</button>
+                                        <input type="number" min="0.25" step="0.25"
+                                               x-model.number="editIngredientQty"
+                                               :placeholder="t('recipes.quantity_label')"
+                                               class="border-y border-stone-200 dark:border-stone-600 dark:bg-stone-700 dark:text-stone-100 px-2 py-2 text-sm text-center w-full min-w-0 focus:outline-none focus:ring-2 focus:ring-pink-400">
+                                        <button type="button"
+                                                @click="editIngredientQty = incrementQuantity(editIngredientQty)"
+                                                class="px-3 border border-stone-200 dark:border-stone-600 dark:bg-stone-700 dark:text-stone-100 rounded-r-lg text-base font-medium hover:bg-stone-100 dark:hover:bg-stone-600">+</button>
+                                    </div>
                                 </div>
+                                <input type="text"
+                                       x-model="editIngredientNotes"
+                                       :placeholder="t('recipes.notes_placeholder')"
+                                       maxlength="200"
+                                       class="w-full border border-stone-200 dark:border-stone-600 dark:bg-stone-700 dark:text-stone-100 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-pink-400">
                                 <div class="flex gap-2 pt-1">
                                     <button type="button"
                                             @click="cancelEditIngredient()"
@@ -179,19 +237,41 @@
                            maxlength="100"
                            required
                            class="w-full border border-stone-200 dark:border-stone-600 dark:bg-stone-700 dark:text-stone-100 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-pink-400">
-                    <div class="flex gap-2">
+                    <div class="flex gap-2 items-stretch">
                         <select x-model="newIngredientUnit"
-                                class="border border-stone-200 dark:border-stone-600 dark:bg-stone-700 dark:text-stone-100 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-pink-400 flex-shrink-0 w-28">
-                            <template x-for="u in unitOptions" :key="u">
-                                <option :value="u" x-text="t('units.' + u)"></option>
-                            </template>
+                                class="border border-stone-200 dark:border-stone-600 dark:bg-stone-700 dark:text-stone-100 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-pink-400 flex-shrink-0 w-32">
+                            <optgroup :label="t('units.cooking_group')">
+                                <template x-for="u in cookingUnits" :key="u">
+                                    <option :value="u" x-text="t('units.' + u)"></option>
+                                </template>
+                            </optgroup>
+                            <optgroup :label="t('units.packaging_group')">
+                                <template x-for="u in packageUnits" :key="u">
+                                    <option :value="u" x-text="t('units.' + u)"></option>
+                                </template>
+                            </optgroup>
+                            <option value="to_taste" x-text="t('units.to_taste')"></option>
                         </select>
-                        <input x-show="newIngredientUnit !== 'to_taste'"
-                               type="number" min="1" max="9999"
-                               x-model.number="newIngredientQty"
-                               :placeholder="t('recipes.quantity_label')"
-                               class="border border-stone-200 dark:border-stone-600 dark:bg-stone-700 dark:text-stone-100 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-pink-400 flex-1">
+                        <div x-show="newIngredientUnit !== 'to_taste'" class="flex flex-1 items-stretch">
+                            <button type="button"
+                                    @click="newIngredientQty = decrementQuantity(newIngredientQty)"
+                                    :disabled="newIngredientQty <= 0.25"
+                                    :class="newIngredientQty <= 0.25 ? 'opacity-30 cursor-not-allowed' : 'hover:bg-stone-100 dark:hover:bg-stone-600'"
+                                    class="px-3 border border-stone-200 dark:border-stone-600 dark:bg-stone-700 dark:text-stone-100 rounded-l-lg text-base font-medium">−</button>
+                            <input type="number" min="0.25" step="0.25"
+                                   x-model.number="newIngredientQty"
+                                   :placeholder="t('recipes.quantity_label')"
+                                   class="border-y border-stone-200 dark:border-stone-600 dark:bg-stone-700 dark:text-stone-100 px-2 py-2 text-sm text-center w-full min-w-0 focus:outline-none focus:ring-2 focus:ring-pink-400">
+                            <button type="button"
+                                    @click="newIngredientQty = incrementQuantity(newIngredientQty)"
+                                    class="px-3 border border-stone-200 dark:border-stone-600 dark:bg-stone-700 dark:text-stone-100 rounded-r-lg text-base font-medium hover:bg-stone-100 dark:hover:bg-stone-600">+</button>
+                        </div>
                     </div>
+                    <input type="text"
+                           x-model="newIngredientNotes"
+                           :placeholder="t('recipes.notes_placeholder')"
+                           maxlength="200"
+                           class="w-full border border-stone-200 dark:border-stone-600 dark:bg-stone-700 dark:text-stone-100 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-pink-400">
                     <div class="flex gap-2 pt-1">
                         <button type="button"
                                 @click="cancelAddIngredient()"
@@ -217,8 +297,21 @@
                             <!-- View row -->
                             <div x-show="editingStepId !== step.id"
                                  @click="startEditStep(step)"
+                                 :class="step.completed ? 'opacity-60' : ''"
                                  class="flex items-start gap-3 px-4 py-3 cursor-pointer hover:bg-stone-50 dark:hover:bg-stone-700/50 transition-colors">
-                                <div class="drag-handle flex-shrink-0 w-5 h-8 flex items-center justify-center -ml-1 touch-none cursor-grab active:cursor-grabbing text-stone-300 dark:text-stone-600 hover:text-stone-400 dark:hover:text-stone-500 mt-0.5"
+                                <!-- Per-step completion checkbox -->
+                                <button type="button"
+                                        @click.stop="toggleStepCompleted(step.id)"
+                                        :aria-label="t('items.check_all')"
+                                        class="flex-shrink-0 w-6 h-6 mt-0.5 flex items-center justify-center">
+                                    <span class="w-5 h-5 rounded-full border-2 transition-colors flex items-center justify-center"
+                                          :class="step.completed ? 'bg-pink-400 border-pink-400' : 'border-stone-300 dark:border-stone-500 hover:border-pink-400'">
+                                        <svg x-show="step.completed" class="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"></path>
+                                        </svg>
+                                    </span>
+                                </button>
+                                <div class="drag-handle flex-shrink-0 w-5 h-8 flex items-center justify-center touch-none cursor-grab active:cursor-grabbing text-stone-300 dark:text-stone-600 hover:text-stone-400 dark:hover:text-stone-500 mt-0.5"
                                      @click.stop>
                                     <svg class="w-4 h-5" fill="currentColor" viewBox="0 0 24 24">
                                         <circle cx="9" cy="5" r="1.5"/>
@@ -232,6 +325,7 @@
                                 <span class="flex-shrink-0 inline-flex items-center justify-center w-6 h-6 rounded-full bg-pink-50 dark:bg-pink-900/40 text-pink-500 dark:text-pink-300 text-xs font-medium tabular-nums mt-0.5"
                                       x-text="step.step_number"></span>
                                 <p class="flex-1 text-sm text-stone-700 dark:text-stone-200 whitespace-pre-line break-words"
+                                   :class="step.completed ? 'line-through text-stone-400 dark:text-stone-500' : ''"
                                    x-text="step.content"></p>
                                 <button type="button"
                                         @click.stop="deleteStep(step)"
@@ -301,6 +395,16 @@
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path>
                     </svg>
                     <span x-text="t('recipes.add_step')"></span>
+                </button>
+
+                <!-- Reset all steps button: only visible when at least one step is completed -->
+                <button x-show="recipe.steps && recipe.steps.some(s => s.completed)" x-cloak
+                        @click="confirmResetSteps()"
+                        class="w-full px-4 py-3 border-t border-stone-100 dark:border-stone-700 text-sm text-amber-600 dark:text-amber-400 hover:text-amber-700 dark:hover:text-amber-300 hover:bg-amber-50/50 dark:hover:bg-amber-900/20 transition-colors flex items-center justify-center gap-2">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
+                    </svg>
+                    <span x-text="t('recipes.reset_steps')"></span>
                 </button>
             </div>
         </section>
@@ -490,6 +594,78 @@
             </svg>
             <span x-text="t('recipes.remove_cover')"></span>
         </button>
+    </div>
+
+    <!-- Ingredient Image Lightbox (separate from cover lightbox; appears when an
+         ingredient image is tapped, OR when a placeholder is tapped to upload). -->
+    <div x-show="ingredientLightbox.open" x-cloak
+         x-transition:enter="transition ease-out duration-150"
+         x-transition:enter-start="opacity-0"
+         x-transition:enter-end="opacity-100"
+         x-transition:leave="transition ease-in duration-100"
+         x-transition:leave-start="opacity-100"
+         x-transition:leave-end="opacity-0"
+         @click.self="closeIngredientLightbox()"
+         @keydown.escape.window="closeIngredientLightbox()"
+         class="fixed inset-0 z-[60] bg-black/90 flex flex-col items-center justify-center p-4"
+         style="padding-top: max(1rem, env(safe-area-inset-top)); padding-bottom: max(1rem, env(safe-area-inset-bottom));">
+        <!-- Close X -->
+        <button @click="closeIngredientLightbox()"
+                class="absolute top-3 right-3 w-11 h-11 flex items-center justify-center text-white/80 hover:text-white rounded-full hover:bg-white/10 transition-colors"
+                :aria-label="t('common.close')"
+                style="top: max(0.75rem, env(safe-area-inset-top));">
+            <svg class="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+            </svg>
+        </button>
+
+        <!-- Image OR placeholder + upload button -->
+        <template x-if="ingredientLightbox.imagePath">
+            <img :src="'/uploads/' + ingredientLightbox.imagePath"
+                 :alt="ingredientLightbox.name"
+                 class="max-w-full max-h-[65vh] object-contain rounded shadow-lg"
+                 @click.stop>
+        </template>
+        <template x-if="!ingredientLightbox.imagePath">
+            <button type="button"
+                    @click.stop="triggerIngredientImageUpload(ingredientLightbox.name)"
+                    class="px-6 py-12 bg-stone-100 dark:bg-stone-800 text-stone-500 dark:text-stone-400 rounded-xl flex flex-col items-center gap-3">
+                <svg class="w-12 h-12" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z"></path>
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z"></path>
+                </svg>
+                <span class="text-sm font-medium" x-text="t('recipes.add_ingredient_image')"></span>
+            </button>
+        </template>
+
+        <div class="mt-4 text-white text-sm font-medium truncate max-w-full" x-text="ingredientLightbox.name"></div>
+
+        <div class="mt-4 flex gap-3">
+            <button x-show="ingredientLightbox.imagePath"
+                    @click="triggerIngredientImageUpload(ingredientLightbox.name)"
+                    class="px-4 py-2.5 bg-white/10 hover:bg-white/20 text-white rounded-lg text-sm font-medium flex items-center gap-2 transition-colors">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z"></path>
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z"></path>
+                </svg>
+                <span x-text="t('recipes.add_ingredient_image')"></span>
+            </button>
+            <button x-show="ingredientLightbox.imagePath"
+                    @click="confirmRemoveIngredientImage(ingredientLightbox.name)"
+                    class="px-4 py-2.5 bg-red-600 hover:bg-red-700 text-white rounded-lg text-sm font-medium flex items-center gap-2 transition-colors">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
+                </svg>
+                <span x-text="t('recipes.remove_ingredient_image')"></span>
+            </button>
+        </div>
+
+        <!-- Hidden file input used by triggerIngredientImageUpload -->
+        <input type="file"
+               id="ingredient-image-input"
+               accept="image/*"
+               class="hidden"
+               @change="uploadIngredientImage(ingredientLightbox.name, $event.target.files[0])">
     </div>
 </div>
 {{end}}

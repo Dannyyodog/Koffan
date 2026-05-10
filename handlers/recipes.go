@@ -27,24 +27,22 @@ const (
 	MaxRecipeNameLength        = 100
 	MaxRecipeDescriptionLength = 500
 	MaxIngredientNameLength    = 100
+	MaxIngredientNotesLength   = 200
 	MaxStepContentLength       = 1000
 )
 
 // validUnits is the closed set of unit strings accepted by ingredient handlers.
-// Stored as plain strings on recipe_ingredients.unit; validated in Go (mirrors
-// section.sort_mode validation at db/queries.go:UpdateSectionSortMode).
+// Two semantic groups (cooking vs packaging) plus the special to_taste — see
+// db.MeasurementUnits / db.PackageUnits for the apply-to-list dispatch.
 var validUnits = map[string]bool{
-	"tsp":      true,
-	"tbsp":     true,
-	"cup":      true,
-	"fl_oz":    true,
-	"oz":       true,
-	"lb":       true,
-	"g":        true,
-	"kg":       true,
-	"ml":       true,
-	"l":        true,
-	"whole":    true,
+	// Cooking / measurement
+	"tsp": true, "tbsp": true, "cup": true, "fl_oz": true, "oz": true,
+	"lb": true, "g": true, "kg": true, "ml": true, "l": true,
+	// Packaging / discrete
+	"whole": true, "can": true, "jar": true, "bottle": true, "package": true,
+	"bunch": true, "head": true, "dozen": true, "slice": true, "loaf": true,
+	"clove": true,
+	// Special
 	"to_taste": true,
 }
 
@@ -247,40 +245,46 @@ func MoveRecipeDown(c *fiber.Ctx) error {
 	return c.SendStatus(200)
 }
 
-// parseIngredientForm extracts (name, *quantity, unit) from form values, applying
-// the unit/quantity rules:
+// parseIngredientForm extracts (name, *quantity, unit, notes) from form values.
+// Rules:
 //   - unit must be in validUnits.
-//   - unit "to_taste"  → quantity is forced to NULL regardless of input (lenient).
-//   - any other unit   → quantity must be present and > 0.
-func parseIngredientForm(c *fiber.Ctx) (name string, quantity *int, unit string, errKey string) {
+//   - unit "to_taste" → quantity forced to NULL (lenient).
+//   - any other unit  → quantity must parse as float > 0.
+//   - notes optional, max MaxIngredientNotesLength chars.
+func parseIngredientForm(c *fiber.Ctx) (name string, quantity *float64, unit, notes string, errKey string) {
 	name = strings.TrimSpace(c.FormValue("name"))
 	if name == "" {
-		return "", nil, "", "error.ingredient_name_required"
+		return "", nil, "", "", "error.ingredient_name_required"
 	}
 	if len(name) > MaxIngredientNameLength {
-		return "", nil, "", "error.name_too_long"
+		return "", nil, "", "", "error.name_too_long"
 	}
 
 	unit = c.FormValue("unit")
 	if !isValidUnit(unit) {
-		return "", nil, "", "error.invalid_unit"
+		return "", nil, "", "", "error.invalid_unit"
+	}
+
+	notes = strings.TrimSpace(c.FormValue("notes"))
+	if len(notes) > MaxIngredientNotesLength {
+		return "", nil, "", "", "error.name_too_long"
 	}
 
 	rawQty := strings.TrimSpace(c.FormValue("quantity"))
 
 	if unit == "to_taste" {
 		// Lenient: ignore any provided quantity; store NULL.
-		return name, nil, unit, ""
+		return name, nil, unit, notes, ""
 	}
 
 	if rawQty == "" {
-		return "", nil, "", "error.ingredient_quantity_required"
+		return "", nil, "", "", "error.ingredient_quantity_required"
 	}
-	q, parseErr := strconv.Atoi(rawQty)
+	q, parseErr := strconv.ParseFloat(rawQty, 64)
 	if parseErr != nil || q <= 0 {
-		return "", nil, "", "error.ingredient_quantity_invalid"
+		return "", nil, "", "", "error.ingredient_quantity_invalid"
 	}
-	return name, &q, unit, ""
+	return name, &q, unit, notes, ""
 }
 
 // AddRecipeIngredient adds an ingredient to a recipe.
@@ -297,12 +301,12 @@ func AddRecipeIngredient(c *fiber.Ctx) error {
 		return sendError(c, 500, "error.fetch_failed")
 	}
 
-	name, quantity, unit, errKey := parseIngredientForm(c)
+	name, quantity, unit, notes, errKey := parseIngredientForm(c)
 	if errKey != "" {
 		return sendError(c, 400, errKey)
 	}
 
-	ingredient, err := db.AddRecipeIngredient(recipeID, name, quantity, unit)
+	ingredient, err := db.AddRecipeIngredient(recipeID, name, quantity, unit, notes)
 	if err != nil {
 		return sendError(c, 500, "error.create_failed")
 	}
@@ -311,7 +315,7 @@ func AddRecipeIngredient(c *fiber.Ctx) error {
 	return c.JSON(ingredient)
 }
 
-// UpdateRecipeIngredient updates an ingredient's name, quantity, and unit.
+// UpdateRecipeIngredient updates an ingredient's name, quantity, unit, and notes.
 func UpdateRecipeIngredient(c *fiber.Ctx) error {
 	if _, err := strconv.ParseInt(c.Params("id"), 10, 64); err != nil {
 		return sendError(c, 400, "error.invalid_id")
@@ -328,12 +332,12 @@ func UpdateRecipeIngredient(c *fiber.Ctx) error {
 		return sendError(c, 500, "error.fetch_failed")
 	}
 
-	name, quantity, unit, errKey := parseIngredientForm(c)
+	name, quantity, unit, notes, errKey := parseIngredientForm(c)
 	if errKey != "" {
 		return sendError(c, 400, errKey)
 	}
 
-	if err := db.UpdateRecipeIngredient(ingredientID, name, quantity, unit); err != nil {
+	if err := db.UpdateRecipeIngredient(ingredientID, name, quantity, unit, notes); err != nil {
 		return sendError(c, 500, "error.update_failed")
 	}
 
@@ -544,6 +548,72 @@ func ReorderRecipeSteps(c *fiber.Ctx) error {
 
 	BroadcastUpdate("recipe_steps_reordered", map[string]int64{"recipe_id": recipeID})
 	return c.SendStatus(200)
+}
+
+// ToggleRecipeStepCompleted flips the per-step completion flag.
+// Returns the updated step JSON. Broadcasts recipe_step_completed_changed so
+// open recipe tabs sync without a full reload.
+func ToggleRecipeStepCompleted(c *fiber.Ctx) error {
+	recipeID, err := strconv.ParseInt(c.Params("id"), 10, 64)
+	if err != nil {
+		return sendError(c, 400, "error.invalid_id")
+	}
+	stepID, err := strconv.ParseInt(c.Params("stepId"), 10, 64)
+	if err != nil {
+		return sendError(c, 400, "error.invalid_id")
+	}
+
+	step, err := db.GetRecipeStep(stepID)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return sendError(c, 404, "error.step_not_found")
+		}
+		return sendError(c, 500, "error.fetch_failed")
+	}
+	if step.RecipeID != recipeID {
+		return sendError(c, 404, "error.step_not_found")
+	}
+
+	newState, err := db.ToggleRecipeStepCompleted(stepID)
+	if err != nil {
+		return sendError(c, 500, "error.toggle_failed")
+	}
+
+	updated, err := db.GetRecipeStep(stepID)
+	if err != nil {
+		return sendError(c, 500, "error.fetch_failed")
+	}
+
+	BroadcastUpdate("recipe_step_completed_changed", map[string]interface{}{
+		"recipe_id": recipeID,
+		"step_id":   stepID,
+		"completed": newState,
+	})
+
+	return c.JSON(updated)
+}
+
+// ResetRecipeStepsCompleted clears completion on every step of a recipe.
+// 204 No Content on success. Broadcasts recipe_steps_reset so open tabs sync.
+func ResetRecipeStepsCompleted(c *fiber.Ctx) error {
+	recipeID, err := strconv.ParseInt(c.Params("id"), 10, 64)
+	if err != nil {
+		return sendError(c, 400, "error.invalid_id")
+	}
+
+	if _, err := db.GetRecipe(recipeID); err != nil {
+		if err == sql.ErrNoRows {
+			return sendError(c, 404, "error.recipe_not_found")
+		}
+		return sendError(c, 500, "error.fetch_failed")
+	}
+
+	if err := db.ResetRecipeStepsCompleted(recipeID); err != nil {
+		return sendError(c, 500, "error.update_failed")
+	}
+
+	BroadcastUpdate("recipe_steps_reset", map[string]int64{"recipe_id": recipeID})
+	return c.SendStatus(204)
 }
 
 // ApplyRecipe is the centerpiece: bulk-create items in a target list (existing or new)
