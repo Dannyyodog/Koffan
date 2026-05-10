@@ -38,6 +38,10 @@ function recipeView(recipeId) {
         applySelections: {},              // { ingredientId: true }
         availableLists: [],
 
+        // Cover image upload
+        uploadingCover: false,
+        coverLightboxOpen: false,
+
         // WebSocket
         ws: null,
         _wsInitialized: false,
@@ -404,6 +408,77 @@ function recipeView(recipeId) {
             }
         },
 
+        // ===== Cover image =====
+
+        // Trigger the OS file picker via the hidden input. iOS Safari shows
+        // its standard sheet (Photo Library / Take Photo / Choose File) for
+        // accept="image/*".
+        triggerCoverUpload() {
+            const input = document.getElementById('cover-image-input');
+            if (input) input.click();
+        },
+
+        // POST the chosen file to /recipes/:id/cover-image. Server handles
+        // size/format validation, HEIC->JPEG re-encoding, sha256 dedup, and
+        // deleting the previous cover from disk. Response carries the new
+        // URL; we update local state and the WS broadcast tells other tabs.
+        async uploadCover(file) {
+            if (!file || !this.recipe?.id) return;
+            this.uploadingCover = true;
+            const formData = new FormData();
+            formData.append('image', file);
+            try {
+                const response = await fetch('/recipes/' + this.recipe.id + '/cover-image', {
+                    method: 'POST',
+                    body: formData,
+                });
+                if (!response.ok) {
+                    const errText = await response.text();
+                    alert(errText || this.t('error.image_save_failed'));
+                    return;
+                }
+                const data = await response.json();
+                if (data && data.cover_image_url) {
+                    this.recipe.cover_image_path = data.cover_image_url.replace(/^\/uploads\//, '');
+                }
+            } catch (e) {
+                console.error('[Recipe] uploadCover failed:', e);
+                alert(this.t('error.image_save_failed'));
+            } finally {
+                this.uploadingCover = false;
+                // Clear the input so re-uploading the same file fires @change again.
+                const input = document.getElementById('cover-image-input');
+                if (input) input.value = '';
+            }
+        },
+
+        openCoverLightbox() {
+            if (!this.recipe?.cover_image_path) return;
+            this.coverLightboxOpen = true;
+        },
+
+        closeCoverLightbox() {
+            this.coverLightboxOpen = false;
+        },
+
+        async confirmRemoveCover() {
+            if (!this.recipe?.id) return;
+            if (!confirm(this.t('recipes.confirm_remove_cover'))) return;
+            try {
+                const response = await fetch('/recipes/' + this.recipe.id + '/cover-image', { method: 'DELETE' });
+                if (!response.ok) {
+                    const errText = await response.text();
+                    alert(errText || this.t('error.image_save_failed'));
+                    return;
+                }
+                this.recipe.cover_image_path = null;
+                this.closeCoverLightbox();
+            } catch (e) {
+                console.error('[Recipe] confirmRemoveCover failed:', e);
+                alert(this.t('error.image_save_failed'));
+            }
+        },
+
         // ===== SortableJS for drag-reorder =====
 
         initSortable() {
@@ -572,6 +647,13 @@ function recipeView(recipeId) {
                     case 'recipe_step_deleted':
                     case 'recipe_steps_reordered':
                         this.loadRecipe();
+                        break;
+                    case 'recipe_cover_updated':
+                        // Payload: { recipe_id, cover_image_url }; empty url means cleared.
+                        if (message.data?.recipe_id === this.recipe?.id) {
+                            const url = message.data?.cover_image_url || '';
+                            this.recipe.cover_image_path = url ? url.replace(/^\/uploads\//, '') : null;
+                        }
                         break;
                 }
             } catch (e) {

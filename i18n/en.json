@@ -47,7 +47,11 @@
     "apply_button_text": "Add {{count}} items",
     "apply_select_list": "Choose a list",
     "apply_no_lists": "You don't have any lists yet — create one below.",
-    "back_to_home": "Back to recipes"
+    "back_to_home": "Back to recipes",
+    "add_cover": "Add cover image",
+    "remove_cover": "Remove cover image",
+    "confirm_remove_cover": "Remove the cover image for this recipe?",
+    "cover_uploading": "Uploading cover..."
   },
   "units": {
     "tsp": "tsp",

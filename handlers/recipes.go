@@ -2,6 +2,10 @@ package handlers
 
 import (
 	"database/sql"
+	"errors"
+	"log"
+	"os"
+	"path/filepath"
 	"shopping-list/db"
 	"shopping-list/i18n"
 	"strconv"
@@ -630,4 +634,119 @@ func ApplyRecipe(c *fiber.Ctx) error {
 // parseIngredientIDs reads `ingredient_ids[]` (form-encoded, repeated) into []int64.
 func parseIngredientIDs(c *fiber.Ctx) ([]int64, error) {
 	return parseIDList(formValuesByName(c, "ingredient_ids"))
+}
+
+// UploadRecipeCoverImage attaches a cover image to a recipe. Reuses the
+// existing item-image upload pipeline (saveUploadedImage, sentinel errors,
+// MaxImageSize, HEIC re-encoding) — recipe covers are stored on the same
+// disk and served by the same /uploads/ filesystem mount, but the path is
+// kept on recipes.cover_image_path rather than item_history.image_path.
+func UploadRecipeCoverImage(c *fiber.Ctx) error {
+	id, err := strconv.ParseInt(c.Params("id"), 10, 64)
+	if err != nil {
+		return sendError(c, 400, "error.invalid_id")
+	}
+
+	recipe, err := db.GetRecipe(id)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return sendError(c, 404, "error.recipe_not_found")
+		}
+		log.Printf("[UPLOAD] fetch recipe %d failed: %v", id, err)
+		return sendError(c, 500, "error.fetch_failed")
+	}
+
+	file, err := c.FormFile("image")
+	if err != nil || file == nil {
+		return sendError(c, 400, "error.image_required")
+	}
+
+	filename, err := saveUploadedImage(file)
+	if err != nil {
+		switch {
+		case errors.Is(err, errImageTooLarge):
+			return sendError(c, 413, "error.image_too_large")
+		case errors.Is(err, errImageInvalidFormat):
+			return sendError(c, 415, "error.image_invalid_format")
+		case errors.Is(err, errImageDecodeFailed):
+			return sendError(c, 422, "error.image_decode_failed")
+		default:
+			log.Printf("[UPLOAD] recipe cover save failed: %v", err)
+			return sendError(c, 500, "error.image_save_failed")
+		}
+	}
+
+	// Capture the previous path BEFORE overwriting so we can clean it up after
+	// a successful DB update. Skipped when the new file is the same hash as the
+	// old one (re-uploading the same image hits sha256 dedup → identical filename).
+	var oldPath string
+	if recipe.CoverImagePath != nil {
+		oldPath = *recipe.CoverImagePath
+	}
+
+	if err := db.SetRecipeCoverImage(id, &filename); err != nil {
+		log.Printf("[UPLOAD] set recipe cover for %d failed: %v", id, err)
+		return sendError(c, 500, "error.image_save_failed")
+	}
+
+	if oldPath != "" && oldPath != filename && UploadsRoot() != "" {
+		fullPath := filepath.Join(UploadsRoot(), oldPath)
+		if rmErr := os.Remove(fullPath); rmErr != nil && !os.IsNotExist(rmErr) {
+			log.Printf("[UPLOAD] remove old recipe cover %q failed: %v", fullPath, rmErr)
+		}
+	}
+
+	url := "/uploads/" + filename
+	BroadcastUpdate("recipe_cover_updated", map[string]interface{}{
+		"recipe_id":       id,
+		"cover_image_url": url,
+	})
+
+	return c.JSON(fiber.Map{
+		"recipe_id":       id,
+		"cover_image_url": url,
+	})
+}
+
+// DeleteRecipeCoverImage clears a recipe's cover image and removes the file
+// from disk. The DB is the source of truth — file removal errors are logged
+// but do not fail the request.
+func DeleteRecipeCoverImage(c *fiber.Ctx) error {
+	id, err := strconv.ParseInt(c.Params("id"), 10, 64)
+	if err != nil {
+		return sendError(c, 400, "error.invalid_id")
+	}
+
+	recipe, err := db.GetRecipe(id)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return sendError(c, 404, "error.recipe_not_found")
+		}
+		log.Printf("[UPLOAD] fetch recipe %d failed: %v", id, err)
+		return sendError(c, 500, "error.fetch_failed")
+	}
+
+	var oldPath string
+	if recipe.CoverImagePath != nil {
+		oldPath = *recipe.CoverImagePath
+	}
+
+	if err := db.SetRecipeCoverImage(id, nil); err != nil {
+		log.Printf("[UPLOAD] clear recipe cover for %d failed: %v", id, err)
+		return sendError(c, 500, "error.image_save_failed")
+	}
+
+	if oldPath != "" && UploadsRoot() != "" {
+		fullPath := filepath.Join(UploadsRoot(), oldPath)
+		if rmErr := os.Remove(fullPath); rmErr != nil && !os.IsNotExist(rmErr) {
+			log.Printf("[UPLOAD] remove recipe cover %q failed: %v", fullPath, rmErr)
+		}
+	}
+
+	BroadcastUpdate("recipe_cover_updated", map[string]interface{}{
+		"recipe_id":       id,
+		"cover_image_url": "",
+	})
+
+	return c.SendStatus(204)
 }

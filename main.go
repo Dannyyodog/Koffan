@@ -272,6 +272,8 @@ func main() {
 	app.Delete("/recipes/:id/steps/:stepId", handlers.DeleteRecipeStep)
 	app.Post("/recipes/:id/steps/reorder", handlers.ReorderRecipeSteps)
 	app.Post("/recipes/:id/apply", handlers.ApplyRecipe)
+	app.Post("/recipes/:id/cover-image", handlers.UploadRecipeCoverImage)
+	app.Delete("/recipes/:id/cover-image", handlers.DeleteRecipeCoverImage)
 
 	// Items API
 	app.Get("/items/:id/html", handlers.GetItemHTML)

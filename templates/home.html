@@ -229,11 +229,19 @@
                 <template x-for="recipe in recipes" :key="recipe.id">
                     <a :href="'/recipes/' + recipe.id"
                        class="bg-white dark:bg-stone-800 rounded-xl border border-stone-200 dark:border-stone-700 hover:border-pink-200 dark:hover:border-pink-700 hover:shadow-md transition-all overflow-hidden flex flex-col">
-                        <!-- Cover placeholder (no image yet — that's the other branch) -->
-                        <div class="aspect-square bg-stone-100 dark:bg-stone-700 flex items-center justify-center">
-                            <svg class="w-10 h-10 text-stone-300 dark:text-stone-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M5 3v8m0 0a2 2 0 002 2v7a1 1 0 001 1h0a1 1 0 001-1v-7a2 2 0 002-2V3M7 3v4m-4-4h4M16 3v8.5a2.5 2.5 0 002.5 2.5H19v6a1 1 0 001 1h0a1 1 0 001-1V3"></path>
-                            </svg>
+                        <!-- Cover image when set, fork-and-knife placeholder otherwise -->
+                        <div class="aspect-square bg-stone-100 dark:bg-stone-700 flex items-center justify-center overflow-hidden">
+                            <template x-if="recipe.cover_image_path">
+                                <img :src="'/uploads/' + recipe.cover_image_path"
+                                     :alt="recipe.name"
+                                     class="w-full h-full object-cover"
+                                     loading="lazy">
+                            </template>
+                            <template x-if="!recipe.cover_image_path">
+                                <svg class="w-10 h-10 text-stone-300 dark:text-stone-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M5 3v8m0 0a2 2 0 002 2v7a1 1 0 001 1h0a1 1 0 001-1v-7a2 2 0 002-2V3M7 3v4m-4-4h4M16 3v8.5a2.5 2.5 0 002.5 2.5H19v6a1 1 0 001 1h0a1 1 0 001-1V3"></path>
+                                </svg>
+                            </template>
                         </div>
                         <div class="p-3">
                             <h3 class="text-sm font-medium text-stone-800 dark:text-stone-100 truncate" x-text="recipe.name"></h3>
@@ -1002,8 +1010,9 @@ function homePage() {
                     case 'recipe_deleted':
                     case 'recipe_ingredient_created':
                     case 'recipe_ingredient_deleted':
+                    case 'recipe_cover_updated':
                         // Reload the whole list — simpler than reconciling individual events
-                        // and ingredient_count needs to update on add/remove.
+                        // and ingredient_count / cover thumbnail need to update on change.
                         this.loadRecipes();
                         break;
                 }

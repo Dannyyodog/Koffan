@@ -381,3 +381,17 @@ func ApplyRecipe(c *fiber.Ctx) error {
 
 	return c.JSON(fiber.Map{"list_id": targetListID})
 }
+
+// UploadRecipeCoverImage and DeleteRecipeCoverImage are thin pass-throughs to
+// the handlers package — the upload/delete shape (multipart form file upload
+// for POST, no body for DELETE) is identical for HTMX and REST API callers,
+// and both responses are already JSON. Wrapping keeps api/api.go consistent
+// with the local-symbol convention used by every other v1 route.
+
+func UploadRecipeCoverImage(c *fiber.Ctx) error {
+	return handlers.UploadRecipeCoverImage(c)
+}
+
+func DeleteRecipeCoverImage(c *fiber.Ctx) error {
+	return handlers.DeleteRecipeCoverImage(c)
+}

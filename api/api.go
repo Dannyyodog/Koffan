@@ -81,4 +81,6 @@ func Register(app *fiber.App) {
 	v1.Put("/recipes/:id/steps/:stepId", UpdateRecipeStep)
 	v1.Delete("/recipes/:id/steps/:stepId", DeleteRecipeStep)
 	v1.Post("/recipes/:id/apply", ApplyRecipe)
+	v1.Post("/recipes/:id/cover-image", UploadRecipeCoverImage)
+	v1.Delete("/recipes/:id/cover-image", DeleteRecipeCoverImage)
 }
