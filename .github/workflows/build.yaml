@@ -4,7 +4,6 @@ on:
   push:
     branches:
       - main
-      - feat/recipes
   workflow_dispatch:
 
 jobs:
@@ -33,7 +32,7 @@ jobs:
         with:
           images: ghcr.io/dannyyodog/koffan
           tags: |
-            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/feat/recipes' }}
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
             type=ref,event=branch
             type=sha,prefix={{branch}}-,format=short
 
